@@ -1,0 +1,167 @@
+---
+- name: Phase 1 - Provision libvirt Virtual Machine
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars_files:
+    - ~/vault/satellite.yml  # This file should contain the sensitive variables like root_password
+
+  vars:
+    vm_name: "satellite-server"
+    vm_memory_mb: 24576  # 24 GB RAM
+    vm_vcpus: 4          # Satellite recommends at least 4 cores
+    vm_disk_size: "200G"
+    base_image_path: "/home/casmith/VirtualMachines/images/rhel-9.7-x86_64-kvm.qcow2" # Point this to your RHEL qcow2 image
+    vm_disk_path: "/home/casmith/VirtualMachines/{{ vm_name }}.qcow2"
+    vm_network: "default" # Assuming libvirt default network is being used
+    hostname: "satellite.laptop" # Change to your actual FQDN
+    static_ip: "192.168.122.5"
+    subnet_cidr: "24"
+    gateway_ip: "192.168.122.1"
+    dns_server: "192.168.122.1"
+    ansible_user: "root"                  # Using root for the initial bootstrap
+
+  tasks:
+    - name: Copy base RHEL image to new VM disk
+      ansible.builtin.copy:
+        src: "{{ base_image_path }}"
+        dest: "{{ vm_disk_path }}"
+        remote_src: true
+        force: false
+        mode: preserve
+
+    - name: Resize the VM disk to 200GB
+      ansible.builtin.command: "qemu-img resize {{ vm_disk_path }} {{ vm_disk_size }}"
+      register: resize_result
+      changed_when: resize_result.rc == 0
+
+    - name: Template the network configuration for static IP
+      ansible.builtin.template:
+        src: eth0.conf.j2
+        dest: /tmp/eth0.conf
+        mode: preserve
+
+    - name: Use virt-customize to set IP address, grow partition and inject SSH key
+      ansible.builtin.command: >
+        virt-customize -a {{ vm_disk_path }} \
+        --root-password password:{{ root_password }} \
+        --hostname "{{ hostname }}" \
+        --upload /tmp/eth0.conf:/etc/NetworkManager/system-connections/Wired\ Connection\ 1.nmconnection \
+        --chmod 0600:/etc/NetworkManager/system-connections/Wired\ Connection\ 1.nmconnection \
+        --run-command "xfs_growfs /dev/sda4" \
+        --ssh-inject root:file://{{ ssh_pub_key_file }}
+      register: customize_result
+      changed_when: customize_result.rc == 0
+
+        # --firstboot-command "nmcli connection modify 'System eth0' \
+        # ipv4.addresses {{ static_ip }}/{{ subnet_cidr }} \
+        # ipv4.gateway {{ gateway }} \
+        # ipv4.dns {{ dns_server }} \
+        # ipv4.method manual" \
+
+
+    - name: Define and start the Satellite VM
+      community.libvirt.virt:
+        command: define
+        xml: "{{ lookup('template', 'vm_template.xml.j2') }}" # See note below about this template
+
+    - name: Start the Virtual Machine
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        state: running
+
+    # - name: Get VM IP address
+    #   community.libvirt.virt_net:
+    #     command: facts
+    #   # Note: Getting the dynamic IP can vary based on your libvirt network setup.
+      # Often, using a cloud-init ISO to inject a static IP during provisioning is more reliable.
+
+    # - name: Add new VM to dynamic inventory
+    #   ansible.builtin.add_host:
+    #     name: "{{ vm_name }}"
+    #     ansible_host: "{{ static_ip }}" # Static IP address set in vars
+    #     ansible_user: "cloud-user"      # Default for RHEL cloud images
+    #     ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+    #     groups: satellite_group
+
+    - name: Wait for SSH to come up
+      ansible.builtin.wait_for:
+        host: "{{ static_ip }}"
+        port: 22
+        delay: 15
+        timeout: 300
+        state: started
+
+- name: Phase 2 - Register to Red Hat and Install Satellite
+  hosts: satellite_group
+  become: true
+  vars_files:
+    - ~/vault/satellite.yml  # This file should contain the sensitive variables like rhsm_user, rhsm_pass, and rhsm_pool_id
+ 
+  vars:
+    satellite_version: "6.18" # Update to your target version
+
+  tasks:
+    - name: Set hostname to FQDN (Required for Satellite)
+      ansible.builtin.hostname:
+        name: "satellite.laptop" # Change to your actual FQDN
+
+    - name: Registering system using activation key and organization ID
+      ansible.builtin.include_role:
+        name: redhat.rhel_system_roles.rhc
+      vars:
+        rhc_auth:
+          activation_keys:
+            keys:
+              - "{{ activationKey }}"
+        rhc_organization: "{{ organizationID }}"
+
+    - name: Disable all current repositories
+      ansible.builtin.command: "subscription-manager repos --disable '*'"
+      changed_when: false
+
+    - name: Enable required repositories for Satellite
+      ansible.builtin.command: >
+        subscription-manager repos
+        --enable=rhel-9-for-x86_64-baseos-rpms
+        --enable=rhel-9-for-x86_64-appstream-rpms
+        --enable=satellite-{{ satellite_version }}-for-rhel-9-x86_64-rpms
+        --enable=satellite-maintenance-{{ satellite_version }}-for-rhel-9-x86_64-rpms
+      register: repo_enable
+      changed_when: repo_enable.rc == 0
+
+    - name: Install Satellite server package
+      ansible.builtin.dnf:
+        name: satellite
+        state: present
+
+    - name: Configure firewalld for Satellite
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop:
+        - 80/tcp
+        - 443/tcp
+        - 5647/tcp
+        - 8000/tcp
+        - 8140/tcp
+        - 9090/tcp
+        - 53/udp
+        - 53/tcp
+        - 67/udp
+        - 69/udp
+
+    - name: Run satellite-installer
+      ansible.builtin.command: "satellite-installer --scenario satellite --accept-eula --foreman-proxy-tftpd=false"
+      register: installer_output
+      # This step takes a long time.
+      changed_when: "'Installation complete' in installer_output.stdout"
+      async: 3600
+      poll: 60
+
+    - name: Display Satellite Installer Output
+      ansible.builtin.debug:
+        var: installer_output.stdout_lines

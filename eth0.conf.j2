@@ -1,0 +1,9 @@
+[connection]
+id=Wired Connection 1
+type=ethernet
+interface-name=eth0
+
+[ipv4]
+method=manual
+address1={{ static_ip }}/{{ subnet_cidr }},{{ gateway_ip }}
+dns={{ dns_server }};
