@@ -3,6 +3,8 @@
   hosts: localhost
   connection: local
   become: true
+  tags:
+    - provision
 
   vars_files:
     - ~/vault/satellite.yml  # This file should contain the sensitive variables like root_password
@@ -54,13 +56,6 @@
       register: customize_result
       changed_when: customize_result.rc == 0
 
-        # --firstboot-command "nmcli connection modify 'System eth0' \
-        # ipv4.addresses {{ static_ip }}/{{ subnet_cidr }} \
-        # ipv4.gateway {{ gateway }} \
-        # ipv4.dns {{ dns_server }} \
-        # ipv4.method manual" \
-
-
     - name: Define and start the Satellite VM
       community.libvirt.virt:
         command: define
@@ -98,7 +93,8 @@
   become: true
   vars_files:
     - ~/vault/satellite.yml  # This file should contain the sensitive variables like rhsm_user, rhsm_pass, and rhsm_pool_id
- 
+  tags:
+    - install
   vars:
     satellite_version: "6.18" # Update to your target version
 
@@ -106,6 +102,13 @@
     - name: Set hostname to FQDN (Required for Satellite)
       ansible.builtin.hostname:
         name: "satellite.laptop" # Change to your actual FQDN
+
+  # Add the hostname to the /etchosts file to ensure it resolves locally
+    - name: Add hostname to /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "{{ static_ip }} satellite.laptop" # Change to your actual FQDN
+        state: present
 
     - name: Registering system using activation key and organization ID
       ansible.builtin.include_role:
@@ -131,10 +134,19 @@
       register: repo_enable
       changed_when: repo_enable.rc == 0
 
-    - name: Install Satellite server package
+    - name: Install Satellite server package and supporting packages
       ansible.builtin.dnf:
-        name: satellite
+        name:
+          - satellite
+          - firewalld
+          - python3-firewall
         state: present
+
+    - name: Enable and start firewalld service
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: true
 
     - name: Configure firewalld for Satellite
       ansible.posix.firewalld:
@@ -155,7 +167,15 @@
         - 69/udp
 
     - name: Run satellite-installer
-      ansible.builtin.command: "satellite-installer --scenario satellite --accept-eula --foreman-proxy-tftpd=false"
+      ansible.builtin.command:
+        argv:
+          - satellite-installer
+          - --scenario
+          - satellite
+          - --foreman-initial-admin-username
+          - admin
+          - --foreman-initial-admin-password
+          - '{{ root_password }}'
       register: installer_output
       # This step takes a long time.
       changed_when: "'Installation complete' in installer_output.stdout"
