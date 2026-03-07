@@ -1,0 +1,5 @@
+---
+vm_network: "default" # Assuming libvirt default network is being used
+subnet_cidr: "24"
+gateway_ip: "192.168.122.1"
+dns_server: "192.168.122.1"

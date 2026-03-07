@@ -1,2 +1,9 @@
 [satellite_group]
-satellite.laptop
+satellite.laptop.lab
+
+[idm_server]
+idm.laptop.lab
+
+[laptop_lab]
+idm.laptop.lab
+satellite.laptop.lab

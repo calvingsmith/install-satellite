@@ -7,12 +7,14 @@
     - provision
 
   vars_files:
-    - ~/vault/satellite.yml  # This file should contain the sensitive variables like root_password
+    - ~/vault/secrets.yml  # This file should contain the sensitive variables like root_password
     - laptop.lab.yml       # This file should contain the static IP and other non-sensitive variables
+    - host_vars/idm.laptop.lab.yml   # This file should contain the VM specs and hostname for IdM
 
   vars:
+    vm_name: "idm-server"                 # Using root for the initial bootstrap
     base_image_path: "/home/casmith/VirtualMachines/images/rhel-9.7-x86_64-kvm.qcow2" # Point this to your RHEL qcow2 image
-    vm_disk_path: "/home/casmith/VirtualMachines/{{ vm_name }}.qcow2"
+    vm_disk_path: "/home/casmith/VirtualMachines/{{ vm_name }}.qcow2"                 # Using root for the initial bootstrap
 
   tasks:
     - name: Copy base RHEL image to new VM disk
@@ -23,7 +25,7 @@
         force: false
         mode: preserve
 
-    - name: Resize the VM disk to 200GB
+    - name: Resize the VM disk
       ansible.builtin.command: "qemu-img resize {{ vm_disk_path }} {{ vm_disk_size }}"
       register: resize_result
       changed_when: resize_result.rc == 0
@@ -46,7 +48,7 @@
       register: customize_result
       changed_when: customize_result.rc == 0
 
-    - name: Define and start the Satellite VM
+    - name: Define and start the IdM VM
       community.libvirt.virt:
         command: define
         xml: "{{ lookup('template', 'vm_template.xml.j2') }}" # See note below about this template
@@ -64,28 +66,53 @@
         timeout: 300
         state: started
 
-- name: Phase 2 - Register to Red Hat and Install Satellite
-  hosts: satellite_group
+    # Delete /tmp/eth0.conf after use
+    # - name: Clean up temporary network config file
+    #   ansible.builtin.file:
+    #     path: /tmp/eth0.conf
+    #     state: absent
+
+- name: Phase 2 - Install Red Hat IdM Server on RHEL 9
+  hosts: idm_server
   become: true
-  vars_files:
-    - ~/vault/satellite.yml  # This file should contain the sensitive variables like rhsm_user, rhsm_pass, and rhsm_pool_id
   tags:
-    - install
+    - install_idm
+
+  # Load the separate passwords file
+  vars_files:
+    - ~/vault/secrets.yml  # This file should contain the sensitive variables like ipadm_password and ipaadmin_password
+    - host_vars/idm.laptop.lab.yml   # This file should contain the VM specs and hostname for IdM
+    - laptop.lab.yml       # This file should contain the static IP and other non-sensitive variables
+
   vars:
-    satellite_version: "6.18" # Update to your target version
+    # --- Core IdM Settings ---
+    ipaserver_domain: "laptop.lab"
+    ipaserver_realm: "LAPTOP.LAB"
+    idm_hostname: "idm.laptop.lab"
 
-  tasks:
-    - name: Set hostname to FQDN (Required for Satellite)
+    # --- DNS Settings ---
+    ipaserver_setup_dns: true
+    ipaserver_auto_forwarders: false
+    ipaserver_forwarders:
+      - 192.168.122.1
+
+    # --- Firewall Settings ---
+    # The role has a built-in feature to automatically open the exact
+    # ports needed for LDAP, Kerberos, DNS, and Dogtag (CA).
+    ipaserver_setup_firewalld: true
+
+  pre_tasks:
+    - name: Ensure hostname is set to FQDN (Strict IdM requirement)
       ansible.builtin.hostname:
-        name: "satellite.laptop.lab" # Change to your actual FQDN
+        name: "{{ idm_hostname }}"
 
-  # Add the hostname to the /etchosts file to ensure it resolves locally
     - name: Add hostname to /etc/hosts
       ansible.builtin.lineinfile:
         path: /etc/hosts
-        line: "{{ static_ip }} satellite.laptop.lab" # Change to your actual FQDN
+        line: "{{ static_ip }} {{ idm_hostname }}" # Change to your actual FQDN
         state: present
 
+    # Register to satellite server using activation key and organization ID
     - name: Registering system using activation key and organization ID
       ansible.builtin.include_role:
         name: redhat.rhel_system_roles.rhc
@@ -100,64 +127,28 @@
       ansible.builtin.command: "subscription-manager repos --disable '*'"
       changed_when: false
 
-    - name: Enable required repositories for Satellite
+    - name: Enable required repositories for IdM
       ansible.builtin.command: >
         subscription-manager repos
         --enable=rhel-9-for-x86_64-baseos-rpms
         --enable=rhel-9-for-x86_64-appstream-rpms
-        --enable=satellite-{{ satellite_version }}-for-rhel-9-x86_64-rpms
-        --enable=satellite-maintenance-{{ satellite_version }}-for-rhel-9-x86_64-rpms
-      register: repo_enable
-      changed_when: repo_enable.rc == 0
+      changed_when: false
 
-    - name: Install Satellite server package and supporting packages
+    - name: Ensure firewalld and ipa-client are installed (required for the role to configure it)
       ansible.builtin.dnf:
         name:
-          - satellite
           - firewalld
           - python3-firewall
+          - ipa-client
         state: present
 
-    - name: Enable and start firewalld service
-      ansible.builtin.service:
+    - name: Ensure firewalld is running and enabled
+      ansible.builtin.systemd:
         name: firewalld
         state: started
         enabled: true
 
-    - name: Configure firewalld for Satellite
-      ansible.posix.firewalld:
-        port: "{{ item }}"
-        permanent: true
-        state: enabled
-        immediate: true
-      loop:
-        - 80/tcp
-        - 443/tcp
-        - 5647/tcp
-        - 8000/tcp
-        - 8140/tcp
-        - 9090/tcp
-        - 53/udp
-        - 53/tcp
-        - 67/udp
-        - 69/udp
-
-    - name: Run satellite-installer
-      ansible.builtin.command:
-        argv:
-          - satellite-installer
-          - --scenario
-          - satellite
-          - --foreman-initial-admin-username
-          - admin
-          - --foreman-initial-admin-password
-          - '{{ root_password }}'
-      register: installer_output
-      # This step takes a long time.
-      changed_when: "'Installation complete' in installer_output.stdout"
-      async: 3600
-      poll: 60
-
-    - name: Display Satellite Installer Output
-      ansible.builtin.debug:
-        var: installer_output.stdout_lines
+  roles:
+    # Use the official Red Hat supported role from the ansible-freeipa package
+    - role: freeipa.ansible_freeipa.ipaserver
+      state: present
