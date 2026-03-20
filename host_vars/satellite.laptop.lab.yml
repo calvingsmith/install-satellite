@@ -1,9 +1,0 @@
-ansible_host: 192.168.122.5
-ansible_user: root
-ansible_ssh_private_key_file: /home/casmith/.ssh/casmith
-static_ip: 192.168.122.5
-vm_name: "satellite-server"
-vm_memory_mb: 24576  # 24 GB RAM
-vm_vcpus: 4          # Satellite recommends at least 4 cores
-vm_disk_size: "200G"
-hostname: "satellite.laptop.lab" # Change to your actual FQDN

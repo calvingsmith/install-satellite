@@ -8,13 +8,24 @@
 
   vars_files:
     - ~/vault/satellite.yml  # This file should contain the sensitive variables like root_password
+    - host_vars/satellite.laptop.lab/satellite.laptop.lab.yml   # This file should contain the VM specs and hostname for Satellite
     - laptop.lab.yml       # This file should contain the static IP and other non-sensitive variables
 
   vars:
+    vm_name: "satellite-server"
     base_image_path: "/home/casmith/VirtualMachines/images/rhel-9.7-x86_64-kvm.qcow2" # Point this to your RHEL qcow2 image
     vm_disk_path: "/home/casmith/VirtualMachines/{{ vm_name }}.qcow2"
 
   tasks:
+    - name: Check if the VM disk already exists
+      ansible.builtin.stat:
+        path: "{{ vm_disk_path }}"
+      register: vm_disk_stat
+
+    - name: End play if VM disk already exists
+      ansible.builtin.meta: end_host
+      when: vm_disk_stat.stat.exists
+
     - name: Copy base RHEL image to new VM disk
       ansible.builtin.copy:
         src: "{{ base_image_path }}"
@@ -69,10 +80,14 @@
   become: true
   vars_files:
     - ~/vault/satellite.yml  # This file should contain the sensitive variables like rhsm_user, rhsm_pass, and rhsm_pool_id
+    - ~/vault/secrets.yml  # This file should contain the sensitive variables like rhsm_user, rhsm_pass, and rhsm_pool_id
+    - laptop.lab.yml       # This file should contain the static IP and other non-sensitive variables
   tags:
     - install
   vars:
     satellite_version: "6.18" # Update to your target version
+    foreman_proxy_realm_principal: "realm-capsule"
+
 
   tasks:
     - name: Set hostname to FQDN (Required for Satellite)
@@ -99,6 +114,8 @@
     - name: Disable all current repositories
       ansible.builtin.command: "subscription-manager repos --disable '*'"
       changed_when: false
+      tags:
+        - tag_repositories
 
     - name: Enable required repositories for Satellite
       ansible.builtin.command: >
@@ -109,13 +126,39 @@
         --enable=satellite-maintenance-{{ satellite_version }}-for-rhel-9-x86_64-rpms
       register: repo_enable
       changed_when: repo_enable.rc == 0
+      tags:
+        - tag_repositories
+
+# Update system
+    # - name: Update all packages to the latest version # noqa: package-latest
+    #   ansible.builtin.dnf:
+    #     disable_plugin:
+    #       - foreman-protector
+    #     name:
+    #       - "*"
+    #     state: latest
+
+
+    # - name: Enable AppStream repository (if not already enabled)
+    #   ansible.builtin.command: >
+    #     subscription-manager repos --enable rhel-9-for-x86_64-appstream-rpms
+    #   register: enable_appstream
+    #   changed_when: "'Repository 'rhel-9-for-x86_64-appstream-rpms' is enabled for the system.' not in enable_appstream.stdout"
+
 
     - name: Install Satellite server package and supporting packages
       ansible.builtin.dnf:
+        disable_plugin: foreman-protector
+        # best: false   # https://issues.redhat.com/browse/RHEL-97629
         name:
-          - satellite
+          - ipa-admintools
+          - python3-ipapython
+          - python3-ipaclient
+          - python3-ipalib
+          - pip
           - firewalld
           - python3-firewall
+
         state: present
 
     - name: Enable and start firewalld service
@@ -124,23 +167,51 @@
         state: started
         enabled: true
 
-    - name: Configure firewalld for Satellite
-      ansible.posix.firewalld:
-        port: "{{ item }}"
-        permanent: true
-        state: enabled
-        immediate: true
-      loop:
-        - 80/tcp
-        - 443/tcp
-        - 5647/tcp
-        - 8000/tcp
-        - 8140/tcp
-        - 9090/tcp
-        - 53/udp
-        - 53/tcp
-        - 67/udp
-        - 69/udp
+    - name: "Apply satellite_pre role to prepare for installation"
+      ansible.builtin.include_role:
+        name: satellite_pre
+      tags:
+        - tags_satellite_pre
+        - tags_pre_sync
+
+    # - name: Add SRV record to allow foreman-proxy to authenticate to IDM for DNS updates
+    #   redhat.rhel_idm.ipadnsrecord:
+    #     ipaadmin_principal: "{{ ipa_admin_principal }}"
+    #     # ipaadmin_server: "{{ ipa_server_fqdn }}"
+    #     ipaadmin_password: "{{ ipa_admin_password }}"
+    #     name: _kerberos._udp.laptop.lab
+    #     zone_name: laptop.lab
+    #     record_type: 'SRV'
+    #     record_value: '10 50 88 idm.laptop.lab'
+
+
+    # - name: Add Kerberos record to allow foreman-proxy to authenticate to freeipa for DNS updates
+    #   redhat.rhel_idm.ipadnsrecord:
+    #     ipaadmin_principal: "{{ ipa_admin_principal }}"
+    #     ipaadmin_password: "{{ ipa_admin_password }}"
+    #     name: "_kerberos"
+    #     zone_name: "{{ ipa_server_domain }}"
+    #     #realm: "{{ ipaserver_realm }}"
+    #     record_type: 'TXT'
+    #     record_value: "{{ ipaserver_realm }}"
+
+    # - name: Add Satellite server to IPA DNS
+    #   redhat.rhel_idm.ipadnsrecord:
+    #     ipaadmin_password: "{{ ipa_admin_password }}"
+    #     ipaadmin_principal: "{{ ipa_admin_principal }}"
+    #     name: "{{ hostname }}"
+    #     zone_name: "{{ ipa_server_domain }}"
+    #     record_type: "A"
+    #     record_value: "{{ static_ip }}"
+    # #    create_reverse: true
+    # #   register: dns_add
+
+    # - name: "Apply role of satellite_pre to {{ ansible_fqdn }}"
+    #   ansible.builtin.include_role:
+    #     name: satellite_pre
+    #   tags:
+    #     - tags_satellite_pre
+    #     - tags_pre_sync
 
     - name: Run satellite-installer
       ansible.builtin.command:
@@ -152,6 +223,19 @@
           - admin
           - --foreman-initial-admin-password
           - '{{ root_password }}'
+          - --foreman-proxy-dns
+          - 'true'
+          - --foreman-proxy-dns-managed
+          - 'false'
+          - --foreman-proxy-dns-provider
+          - "nsupdate_gss" # nsupdate_gss1 is the provider for freeipa integration, if using bind9 this would be "nsupdate_bind9"
+          - --foreman-proxy-dns-server
+          - "{{ ipa_server_fqdn }}"
+          - --foreman-proxy-dns-tsig-keytab
+          - "/etc/foreman-proxy/freeipa.keytab"
+          - --foreman-proxy-dns-tsig-principal
+          - "{{ foreman_proxy_realm_principal }}"
+          - --
       register: installer_output
       # This step takes a long time.
       changed_when: "'Installation complete' in installer_output.stdout"
@@ -160,4 +244,108 @@
 
     - name: Display Satellite Installer Output
       ansible.builtin.debug:
-        var: installer_output.stdout_lines
+        msg: "Installer output: {{ installer_output.stdout_lines }}"
+
+
+- name: Phase3 - Post Installation Tasks
+  hosts: satellite_group
+  become: true
+  tags:
+    - post_install
+  vars_files:
+    - ~/vault/satellite.yml  # This file should contain the sensitive variables like rhsm_user, rhsm_pass, and rhsm_pool_id
+    - ~/vault/secrets.yml  # This file should contain the sensitive variables like ipadm_password and ipaadmin_password
+    - redhat_manifests.yml  # This file should contain the manifest configuration for the redhat_manifests role
+
+  tasks:
+    # - name: Ensure Satellite services are running
+    #   ansible.builtin.service:
+    #     name: "{{ item }}"
+    #     state: started
+    #     enabled: true
+    #   loop:
+    #     - httpd
+    #     - foreman-proxy
+    #     - pulp_workers
+    #     - qdrouterd
+    # - name: "debug manifest vars"
+    #   ansible.builtin.debug:
+    #     var: satellite_manifests
+
+    - name: "Ensure Satellite manifest configuration"
+      ansible.builtin.import_role:
+        name: subscription_manifests
+
+    # - name: "Ensure Satellite subscription manifest configuration"
+    #   ansible.builtin.import_role:
+    #     name: subscription_manifests
+    #   tags:
+    #     - tags_basic_config
+    #     - tags_manifest
+    #     - tags_pre_sync
+
+    - name: "Ensure Satellite Idm configuration"
+      when:
+        - satellite_pre_use_idm
+        - rex_kerberos_enabled
+      ansible.builtin.import_role:
+        name: rex_kerberos
+      tags:
+        - tags_basic_config
+        - tags_rex_kerberos
+        - tags_pre_sync
+
+    - name: "Ensure content credentials configuration"
+      ansible.builtin.import_role:
+        name: content_credentials
+      tags:
+        - tags_content_config
+        - tags_redhat_repos
+        - tags_repository_sets
+        - tags_pre_sync
+
+    - name: "Ensure repository sets configuration"
+      ansible.builtin.import_role:
+        name: repository_sets
+      tags:
+        - tags_content_config
+        - tags_redhat_repos
+        - tags_repository_sets
+        - tags_pre_sync
+
+    - name: "Ensure custom products configuration"
+      ansible.builtin.import_role:
+        name: custom_products
+      tags:
+        - tags_content_config
+        - custom_repos
+        - tags_repositories
+        - tags_pre_sync
+
+    - name: "Ensure additional repository configuration"
+      ansible.builtin.import_role:
+        name: repositories
+      tags:
+        - tags_content_config
+        - custom_repos
+        - tags_repositories
+        - tags_pre_sync
+
+    # - name: Download and import the manifest into Satellite
+    #   ansible.builtin.command: >
+    #     hammer subscription upload --organization "{{ satellite_organization }}" --file "{{ manifest_path }}"
+    #   register: manifest_upload
+    #   changed_when: "'Successfully uploaded' in manifest_upload.stdout"
+
+    # - name: Download satellite manifest and content
+    #   ansible.builtin.command: >
+    #     hammer content-view publish --organization "{{ satellite_organization }}" --location "{{ satellite_location }}" --name "Default Content View"
+    #   register: publish_output
+    #   changed_when: "'Content view published' in publish_output.stdout"
+
+    # - name: Download repository content and publish to clients
+    #   ansible.builtin.command: >
+    #     hammer repository-set synchronize --organization "{{ satellite_organization }}" --location "{{ satellite_location }}" --name "{{ item.name }}"
+    #   loop: "{{ repository_sets }}"
+    #   register: sync_output
+    #   changed_when: "'Successfully synchronized' in sync_output.stdout"

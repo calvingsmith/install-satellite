@@ -17,6 +17,15 @@
     vm_disk_path: "/home/casmith/VirtualMachines/{{ vm_name }}.qcow2"                 # Using root for the initial bootstrap
 
   tasks:
+    - name: Check if the VM disk already exists
+      ansible.builtin.stat:
+        path: "{{ vm_disk_path }}"
+      register: vm_disk_stat
+
+    - name: End play if VM disk already exists
+      ansible.builtin.meta: end_host
+      when: vm_disk_stat.stat.exists
+
     - name: Copy base RHEL image to new VM disk
       ansible.builtin.copy:
         src: "{{ base_image_path }}"
@@ -85,10 +94,6 @@
     - laptop.lab.yml       # This file should contain the static IP and other non-sensitive variables
 
   vars:
-    # --- Core IdM Settings ---
-    ipaserver_domain: "laptop.lab"
-    ipaserver_realm: "LAPTOP.LAB"
-    idm_hostname: "idm.laptop.lab"
 
     # --- DNS Settings ---
     ipaserver_setup_dns: true
@@ -126,6 +131,8 @@
     - name: Disable all current repositories
       ansible.builtin.command: "subscription-manager repos --disable '*'"
       changed_when: false
+      tags:
+        - tag_repositories
 
     - name: Enable required repositories for IdM
       ansible.builtin.command: >
@@ -133,6 +140,8 @@
         --enable=rhel-9-for-x86_64-baseos-rpms
         --enable=rhel-9-for-x86_64-appstream-rpms
       changed_when: false
+      tags:
+        - tag_repositories
 
     - name: Ensure firewalld and ipa-client are installed (required for the role to configure it)
       ansible.builtin.dnf:
@@ -148,7 +157,19 @@
         state: started
         enabled: true
 
+    # Install ipaserver before role to avoid bug
+    - name: Install ipaserver package to avoid role bug
+      ansible.builtin.dnf:
+        best: false
+        name:
+          - ipa-server
+          - python3-ipapython
+          - ipa-server-dns
+        #  - ipa-server-firewall
+        state: present
+
+
   roles:
     # Use the official Red Hat supported role from the ansible-freeipa package
-    - role: freeipa.ansible_freeipa.ipaserver
+    - role: redhat.rhel_idm.ipaserver
       state: present

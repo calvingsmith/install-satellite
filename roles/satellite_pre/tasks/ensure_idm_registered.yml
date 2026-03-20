@@ -1,0 +1,55 @@
+---
+
+# unfortunately, this is necessary on RHEL8
+- name: "Reset the idm module state"  # noqa: no-changed-when
+  when: "ansible_distribution_major_version|int == 8"
+  ansible.builtin.command: "dnf -y module reset idm"
+
+- name: "Enable the idm module"  # noqa: no-changed-when
+  when: "ansible_distribution_major_version|int == 8"
+  ansible.builtin.command: "dnf -y module enable idm:DL1"
+
+- name: "Ensure the client module is installed"  # noqa: no-changed-when command-instead-of-shell
+  when: "ansible_distribution_major_version|int == 8"
+  ansible.builtin.shell: "dnf -y module install idm:DL1/client"
+
+- name: "Ensure /etc/hosts"
+  ansible.builtin.lineinfile:
+    path: "/etc/hosts"
+    line: "{{ ipa_client_dns_servers }}    {{ ipa_server_fqdn }}"
+
+- name: "Ensure idm server is our DNS resolver"
+  ansible.builtin.lineinfile:
+    path: "/etc/resolv.conf"
+    line: "nameserver {{ ipa_client_dns_servers }}"
+
+- name: "Ensure the client configuration"
+  ansible.builtin.include_role:
+    name: "redhat.rhel_idm.ipaclient"
+
+
+# #FIXME: convert to use the module when the bugs are worked out
+# - name: Add Satellite server to IPA DNS
+#   ansible.builtin.command: >
+#     ipa dnsrecord-add {{ ipa_server_domain }} {{ hostname }}. --a-ip-address={{ static_ip }}
+#   register: dns_add
+#   changed_when: "'Added DNS record' in dns_add.stdout"
+
+- name: Add Satellite server to IPA DNS
+  redhat.rhel_idm.ipadnsrecord:
+    ipaadmin_password: "{{ ipa_admin_password }}"
+    ipaadmin_principal: "{{ ipa_admin_principal }}"
+    name: "{{ hostname }}"
+    zone_name: "{{ ipa_server_domain }}"
+    record_type: "A"
+    record_value: "{{ static_ip }}"
+    create_reverse: true
+#   register: dns_add
+
+# Add server to ipa server DNS    - name: Setup kerberos
+- name: "Set up Kerberos for foreman-proxy to allow DNS updates"  # noqa: no-changed-when risky-shell-pipe
+  redhat.rhel_idm.ipaclient_setup_krb5:
+    domain: "{{ ipaserver_domain }}"
+    realm: "{{ ipaserver_realm }}"
+    servers: "{{ ipa_server_fqdn }}"
+    hostname: "{{ hostname }}"

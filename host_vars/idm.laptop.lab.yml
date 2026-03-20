@@ -9,4 +9,5 @@ vm_memory_mb: 4096  # 4 GB RAM
 vm_vcpus: 2          # IdM recommends at least 2 cores
 vm_disk_size: "20G"
 hostname: "idm.laptop.lab" # Change to your actual FQDN
+dns_server: "192.168.122.1"
 

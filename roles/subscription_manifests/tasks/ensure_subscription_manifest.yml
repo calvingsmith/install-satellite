@@ -1,0 +1,52 @@
+---
+
+# This task enures that the manifest is uploaded, updated, refreshed or deleted
+# it can be used to change the location of where the system gets content. e.g. alternate content source
+# see: repository_url
+
+# - name: "Ensure state of the subscription manifest - {{ subscription_manifest.organization }}"
+#   redhat.satellite.subscription_manifest:
+#     username: "{{ satellite_username | default(omit) }}"
+#     password: "{{ satellite_password | default(omit) }}"
+#     use_gssapi: "{{ satellite_use_gssapi | default(omit) }}"
+#     server_url: "{{ satellite_url }}"
+#     validate_certs: "{{ satellite_validate_certs }}"
+#     organization: "{{ subscription_manifest.organization }}"
+#     manifest_path: "{{ subscription_manifest.path | default(omit) }}"
+#     repository_url: "{{ subscription_manifest.repository_url | default(omit) }}"
+#     state: "{{ subscription_manifest.state | default(omit) }}" # present
+
+- name: "Upload the manifest"
+  block:
+    - name: copy the manifest to the host if it is not already there
+      ansible.builtin.copy:
+        src: "{{ subscription_manifest.path }}"
+        dest: "/tmp/manifest.zip"
+        # remote_src: yes
+      when: subscription_manifest.path is defined
+
+    - name: Try to upload
+      redhat.satellite.subscription_manifest:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        organization: "{{ satellite_organization }}"
+        manifest_path: "/tmp/manifest.zip"
+        state: present
+  rescue:
+    - name: Delete any exiting manifest
+      redhat.satellite.subscription_manifest:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        organization: "{{ satellite_organization }}"
+        state: absent
+
+    - name: Try to uploading again
+      redhat.satellite.subscription_manifest:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        organization: "{{ satellite_organization }}"
+        manifest_path: "{{ manifest_path }}"
+        state: present

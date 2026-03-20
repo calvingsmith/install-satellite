@@ -1,0 +1,224 @@
+---
+# "Technically" these are products, but lets not quibble
+
+# Sync / Publish / Promote main control vars
+# set to true to overide default to sync all content, publish all CVs and CCVs, and promote
+# these are valuable in testing or in maintainance runs
+# Content promotion is embedded in the publish operation for this project
+skip_sync: false
+skip_publish_all: false
+force_sync: false
+
+# repository sets are for this organization
+satellite_organization: "{{ satellite_initial_organization }}"
+satellite_location: "{{ satellite_initial_location }}"
+
+# Add additional content not needed for boostrap but still valuable and useful
+# Can be set to false to skip managemet of repos, CVs and CCVs
+repository_sets:
+############## RHEL 10 ##################
+# RHEL 10.x kickstart
+  - name: "Red Hat Enterprise Linux 10 for x86_64 - BaseOS (Kickstart)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "10.0"
+
+  - name: "Red Hat Enterprise Linux 10 for x86_64 - AppStream (Kickstart)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "10.0"
+
+# RHEL10 repos
+  - name: "Red Hat Enterprise Linux 10 for x86_64 - BaseOS (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "10"
+
+  - name: "Red Hat Enterprise Linux 10 for x86_64 - AppStream (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "10"
+
+  - name: "Red Hat Enterprise Linux 10 for x86_64 - Supplementary (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "10"
+
+  - name: "Red Hat Enterprise Linux 10 for x86_64 - Extensions (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "10"
+
+  - name: "Red Hat Satellite Client 6 for RHEL 10 x86_64 (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+
+  - name: "Red Hat Satellite 6 Client 2 for RHEL 10 x86_64 (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+
+# RHEL10 HA repos
+  - name: "Red Hat Enterprise Linux 10 for x86_64 - High Availability (RPMs)"
+    product: "Red Hat Enterprise Linux High Availability for x86_64"
+    repository_list:
+      - releasever: "10"
+
+############## RHEL 9 ##################
+# RHEL 9.x kickstart
+  - name: "Red Hat Enterprise Linux 9 for x86_64 - BaseOS (Kickstart)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "9.6"
+      - releasever: "9.5"
+
+  - name: "Red Hat Enterprise Linux 9 for x86_64 - AppStream (Kickstart)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "9.6"
+      - releasever: "9.5"
+
+# RHEL9 repos
+  - name: "Red Hat Enterprise Linux 9 for x86_64 - BaseOS (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "9"
+
+  - name: "Red Hat Enterprise Linux 9 for x86_64 - AppStream (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "9"
+
+  - name: "Red Hat Enterprise Linux 9 for x86_64 - Supplementary (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "9"
+
+  - name: "Red Hat Satellite Client 6 for RHEL 9 x86_64 (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+
+  - name: "Red Hat Satellite 6 Client 2 for RHEL 9 x86_64 (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+
+# RHEL9 HA repos
+  - name: "Red Hat Enterprise Linux 9 for x86_64 - High Availability (RPMs)"
+    product: "Red Hat Enterprise Linux High Availability for x86_64"
+    repository_list:
+      - releasever: "9"
+
+# RHEL9 repos for LEAPP_8_2_9
+  - name: "Red Hat Enterprise Linux 9 for x86_64 - BaseOS (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "9.6"
+
+  - name: "Red Hat Enterprise Linux 9 for x86_64 - AppStream (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "9.6"
+
+  - name: "Red Hat Enterprise Linux 9 for x86_64 - Supplementary (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "9.6"
+
+############## RHEL 8 ##################
+# RHEL 8.x kickstarts
+  - name: "Red Hat Enterprise Linux 8 for x86_64 - BaseOS (Kickstart)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "8.10"
+
+  - name: "Red Hat Enterprise Linux 8 for x86_64 - AppStream (Kickstart)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "8.10"
+
+# RHEL 8 Repos
+  - name: "Red Hat Enterprise Linux 8 for x86_64 - BaseOS (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "8"
+
+  - name: "Red Hat Enterprise Linux 8 for x86_64 - AppStream (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "8"
+
+  - name: "Red Hat Enterprise Linux 8 for x86_64 - Supplementary (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "8"
+
+  - name: "Red Hat Satellite Client 6 for RHEL 8 x86_64 (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+
+  - name: "Red Hat Satellite 6 Client 2 for RHEL 8 x86_64 (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+
+# RHEL8 HA Repos
+  - name: "Red Hat Enterprise Linux 8 for x86_64 - High Availability (RPMs)"
+    product: "Red Hat Enterprise Linux High Availability for x86_64"
+    repository_list:
+      - releasever: "8"
+
+# RHEL 8.10 repos for LEAPP
+  - name: "Red Hat Enterprise Linux 8 for x86_64 - BaseOS (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "8.10"
+
+  - name: "Red Hat Enterprise Linux 8 for x86_64 - AppStream (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "8.10"
+
+  - name: "Red Hat Enterprise Linux 8 for x86_64 - Supplementary (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+    repository_list:
+      - releasever: "8.10"
+
+############## AAP ##################
+# Ansible Automation Platform 2.4 and 2.5
+  - name: "Red Hat Ansible Automation Platform 2.4 for RHEL 9 x86_64 (Files)"
+    product: "Red Hat Ansible Automation Platform"
+
+  - name: "Red Hat Ansible Automation Platform 2.4 for RHEL 9 x86_64 (RPMs)"
+    product: "Red Hat Ansible Automation Platform"
+
+  - name: "Red Hat Ansible Automation Platform 2.5 for RHEL 9 x86_64 (Files)"
+    product: "Red Hat Ansible Automation Platform"
+
+  - name: "Red Hat Ansible Automation Platform 2.5 for RHEL 9 x86_64 (RPMs)"
+    product: "Red Hat Ansible Automation Platform"
+
+############## Satellite ##################
+# Satellite 6.18
+  - name: "Red Hat Satellite Capsule 6.18 for RHEL 9 x86_64 (RPMs)"
+    product: "Red Hat Satellite Capsule"
+
+  - name: "Red Hat Satellite Maintenance 6.18 for RHEL 9 x86_64 (RPMs)"
+    product: "Red Hat Enterprise Linux for x86_64"
+
+############## JBoss EAP ##################
+# JBoss Repos Needed for the JBoss server pipeline
+  - name: "JBoss Enterprise Application Platform 7.4 (RHEL 8) (RPMs)"
+    product: "JBoss Enterprise Application Platform"
+
+  - name: "JBoss Enterprise Application Platform 7.4 (RHEL 9) (RPMs)"
+    product: "JBoss Enterprise Application Platform"
+
+  - name: "JBoss Enterprise Application Platform 8.0 (RHEL 8 x86_64) (RPMs)"
+    product: "JBoss Enterprise Application Platform"
+
+  - name: "JBoss Enterprise Application Platform 8.0 (RHEL 9 x86_64) (RPMs)"
+    product: "JBoss Enterprise Application Platform"
+
+  - name: "JBoss Enterprise Application Platform 8.1 (RHEL 8 x86_64) (RPMs)"
+    product: "JBoss Enterprise Application Platform"
+
+  - name: "JBoss Enterprise Application Platform 8.1 (RHEL 9 x86_64) (RPMs)"
+    product: "JBoss Enterprise Application Platform"
+# Please see custom products for:
+# CentOS79
+# CentOS9
+# OEL79
+# convert2rhel
+# mssqlserver2022

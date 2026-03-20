@@ -1,0 +1,24 @@
+sat_ssl_rsa_key_pass: "{{ sat_ssl_rsa_key_pass_vault }}"
+sat_ssl_certs_dir: "/etc/ipa/private/{{ ansible_fqdn }}/"
+sat_ssl_crt_path: "{{ sat_ssl_certs_dir }}{{ ansible_fqdn }}.crt"
+sat_ssl_key_path: "{{ sat_ssl_certs_dir }}{{ ansible_fqdn }}.key"
+sat_ssl_csr_path: "{{ sat_ssl_certs_dir }}{{ ansible_fqdn }}.csr"
+ipa_server_ca_path: "/etc/ipa/ca.crt"
+
+crt_service_type: "HTTP"
+crt_force_regen: true
+
+passfile: "{{ sat_ssl_certs_dir }}passfile"
+ssl_private_key_cipher: "aes256"
+ssl_private_key_size: 4096
+ssl_private_key_pem_path: "{{ sat_ssl_certs_dir }}{{ ansible_fqdn }}.pem"
+ssl_public_key_path: "{{ sat_ssl_certs_dir }}{{ ansible_fqdn }}.pub"
+ssl_public_key_format: "PEM"
+
+csr_digest: "aes256"
+csr_organization_name: "{{ ansible_domain | upper }}"
+csr_organization_unit_name: "Demo Lab"
+csr_locality_name: "Hespeler"
+csr_state_or_province_name: "ON"
+csr_country_name: "CA"
+csr_email_address: "admin@{{ ansible_domain }}"

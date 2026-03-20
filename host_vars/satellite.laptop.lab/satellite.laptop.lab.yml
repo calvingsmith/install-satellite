@@ -1,0 +1,34 @@
+ansible_host: 192.168.122.5
+ansible_fqdn: satellite.laptop.lab
+ansible_user: root
+ansible_ssh_private_key_file: /home/casmith/.ssh/casmith
+ansible_python_interpreter: /usr/bin/python3
+static_ip: 192.168.122.5
+vm_memory_mb: 24576  # 24 GB RAM
+vm_vcpus: 4          # Satellite recommends at least 4 cores
+vm_disk_size: "200G"
+hostname: "satellite.laptop.lab" # Change to your actual FQDN
+satellite_url: "https://{{ hostname }}"
+dns_server: "192.168.122.4"
+satellite_pre_use_idm: true
+satellite_validate_certs: true
+sat_firewalld_zone: "public"
+sat_firewalld_services:
+  - RH-Satellite-6
+  - http
+  - https
+  - dhcp
+  - dns
+  - tftp
+# Set this variable to false to skip IdM integration
+# Note: this probably means you aren't using Realms anywhere
+# unless they are AD realms, so check variable files referencing
+# realms, like hostgroups, realms, etc..
+satellite_pre_use_idm: true
+# If you are integrating with IdM and you don't want to regenerate the
+# keytab file for your realm user (because you have capsules that are currently using it)
+# set skip_prepare_realm below to true. This will avoid having
+# to redistribute the keytab file to your capsules.
+skip_prepare_realm: false
+
+

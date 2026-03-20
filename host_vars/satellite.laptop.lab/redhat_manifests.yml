@@ -1,0 +1,37 @@
+---
+# The rhisam does not provide a manifest.
+# All manifests manifests must be provided by the user
+# The code can generate a manifest for the user based on the providing the info below
+# This defines manifests that we will create
+
+redhat_manifests:
+  - name: "{{ ansible_fqdn }}"
+    account: "{{ organizationID }}"
+    cdn_username: "{{ satellite_username }}"
+    cdn_password: "{{ satellite_password }}"
+    #content_access_mode: "org_environment"  # SCA mode
+    organization: "Default Organization"
+    path: "/home/casmith/vault/bootstrap_manifest.zip"
+    # portal_url: "https://satellite.laptop.lab/pulp/content/manifest/manifest.zip"  # this is just for testing, it should be the same as the manifest_path or a url to an alternate content source in Satellite
+    portal_url: "https://satellite.laptop.lab/"
+    # repository_url:  # specify a url for alternate content source in Satellite
+    state: present
+   #  subs: "{{ example_ca_subs_vault }}"
+    validate_certs: false
+
+# we want to eventually support searching by contract number + SKU
+
+# example of subs dict
+# parmstrong.ca_subs_vault:
+#   - name: "Base"
+#     pool_id: "2c946de78e8076d6018e85b1e0b375e8"                                                  # notsecret
+#     pool_state: present
+#     qty: 1000
+#   - name: "SatCapsule"
+#     pool_id: "2c94f6188e80762a018e85b358943df1"                                                   # notsecret
+#     pool_state: present
+#     qty: 1
+#   - name: "NonRHEL"
+#     pool_id: "2c94f6188e80762a018e85b2bb4b3dec"                                                   # notsecret
+#     pool_state: present
+#     qty: 100

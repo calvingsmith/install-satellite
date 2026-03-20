@@ -1,0 +1,24 @@
+#  There are really two aspects to manifests.
+#  1. Creating, modifying, and deleting a manifest on the portal. And fetching the manifest..
+#  2. Uploading, refreshing and replacing manifests on the Satellite
+
+# This module only deals with item 1.
+# The RHISAM doesn't provide a manifest.
+# All manifests are user manifests.
+
+- name: debug manifest vars
+  ansible.builtin.debug:
+    var: redhat_manifests
+
+    
+- name: "Ensure the manifests are configured in the portal"
+  when: "redhat_manifests is defined"
+  ansible.builtin.include_tasks: "ensure_redhat_manifest.yml"
+  loop: "{{ redhat_manifests }}"
+  loop_control:
+    loop_var: redhat_manifest
+    # no_log: true
+  tags:
+    - tags_rhisam
+    - tags_user
+    - tags_redhat_manifests
