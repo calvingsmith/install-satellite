@@ -1,0 +1,82 @@
+---
+# Install collection on Satellite, then import into Foreman so hostgroup can assign ansible_roles.
+# Requires outbound access to Ansible Galaxy (or an offline mirror) for the install step.
+
+- name: Stat Insights collection directory on Satellite
+  ansible.builtin.stat:
+    path: "{{ rhel9_insights_ansible_collection_path }}"
+  register: rhel9_insights_collection_stat
+
+- name: Ensure system-wide Ansible collections directory exists
+  ansible.builtin.file:
+    path: "{{ rhel9_insights_ansible_collections_path }}"
+    state: directory
+    mode: "0755"
+
+- name: Build argv for ansible-galaxy collection install
+  ansible.builtin.set_fact:
+    rhel9_insights_galaxy_install_argv: >-
+      {{
+        ['ansible-galaxy', 'collection', 'install', rhel9_insights_ansible_collection,
+         '-p', rhel9_insights_ansible_collections_path]
+        + (['--force'] if rhel9_insights_ansible_collection_force | bool else [])
+      }}
+
+- name: Install Red Hat Insights Ansible collection on Satellite
+  ansible.builtin.command:
+    argv: "{{ rhel9_insights_galaxy_install_argv }}"
+  register: rhel9_insights_galaxy_install
+  when: (rhel9_insights_ansible_collection_force | bool) or not rhel9_insights_collection_stat.stat.exists
+  changed_when: >-
+    not (rhel9_insights_galaxy_install.skipped | default(false)) and
+    rhel9_insights_galaxy_install.rc == 0 and
+    (
+      'Installing' in rhel9_insights_galaxy_install.stdout | default('')
+      or 'was installed successfully' in rhel9_insights_galaxy_install.stdout | default('')
+      or 'Successfully installed' in rhel9_insights_galaxy_install.stdout | default('')
+    )
+  failed_when: >-
+    not (rhel9_insights_galaxy_install.skipped | default(false)) and
+    rhel9_insights_galaxy_install.rc | default(1) != 0
+
+- name: Get Smart Proxy ID for Ansible role import
+  ansible.builtin.command:
+    argv:
+      - hammer
+      - proxy
+      - info
+      - "--name"
+      - "{{ satellite_smart_proxy_name }}"
+      - "--output"
+      - json
+  register: rhel9_insights_proxy_info
+  changed_when: false
+
+- name: Set Smart Proxy ID for hammer ansible import
+  vars:
+    _proxy: "{{ rhel9_insights_proxy_info.stdout | from_json }}"
+  ansible.builtin.set_fact:
+    satellite_ansible_smart_proxy_id: "{{ _proxy.id | default(_proxy.Id) }}"
+
+- name: Assert Smart Proxy ID was resolved
+  ansible.builtin.assert:
+    that:
+      - satellite_ansible_smart_proxy_id is defined
+      - satellite_ansible_smart_proxy_id | string | length > 0
+    fail_msg: >-
+      Could not read id from `hammer proxy info --name {{ satellite_smart_proxy_name }} --output json`.
+
+- name: Import Insights Ansible role(s) into Satellite from Smart Proxy
+  ansible.builtin.command:
+    argv:
+      - hammer
+      - ansible
+      - roles
+      - import
+      - "--smart-proxy-id"
+      - "{{ satellite_ansible_smart_proxy_id | string }}"
+      - "--role-names"
+      - "{{ rhel9_insights_hammer_import_role_names }}"
+  register: rhel9_insights_hammer_import
+  changed_when: rhel9_insights_hammer_import.rc == 0
+  failed_when: rhel9_insights_hammer_import.rc != 0

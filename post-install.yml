@@ -36,6 +36,14 @@
         - tags_subnet
         - tags_pre_sync
 
+    - name: "Ensure libvirt compute resource"
+      ansible.builtin.import_role:
+        name: libvirt_compute_resource
+      tags:
+        - tags_basic_config
+        - tags_compute_resource
+        - tags_pre_sync
+
     # - name: "Ensure Satellite subscription manifest configuration"
     #   ansible.builtin.import_role:
     #     name: subscription_manifests
@@ -101,7 +109,19 @@
         - tags_basic_config
         - tags_pre_sync
 
-    # Host group only: --tags tags_hostgroup (add tags_activation_key first if the key does not exist yet)
+    # Insights collection + Foreman import (required before hostgroup assigns ansible_roles).
+    # Only this step: --tags tags_insights_ansible
+    - name: "Install Insights Ansible collection on Satellite and import roles"
+      ansible.builtin.import_role:
+        name: rhel9_provisioning
+        tasks_from: install_ansible_roles_on_satellite.yml
+      tags:
+        - tags_insights_ansible
+        - tags_hostgroup
+        - tags_basic_config
+        - tags_pre_sync
+
+    # Host group only: --tags tags_hostgroup (run tags_insights_ansible first if roles are not imported yet)
     - name: "Create rhel9-server host group in Satellite"
       ansible.builtin.import_role:
         name: rhel9_provisioning

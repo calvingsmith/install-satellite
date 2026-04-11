@@ -5,10 +5,24 @@
 rhel9_hostgroup_name: "rhel9-server"
 rhel9_hostgroup_architecture: "x86_64"
 rhel9_hostgroup_ptable: "Kickstart default"
+# Foreman OS title (Hosts → Operating Systems, or hammer os list); not the shorthand "RHEL 9.7".
+rhel9_hostgroup_operatingsystem: "RHEL 9.7"
 # Content source and OpenSCAP proxy default to integrated Satellite (hammer proxy list).
 # Override per host_vars if needed, e.g. a Capsule FQDN.
 # rhel9_hostgroup_content_source: "satellite.example.com"
 # rhel9_hostgroup_openscap_proxy: "satellite.example.com"
+
+# Ansible roles on the host group (foreman_ansible; role must be imported in Satellite).
+rhel9_hostgroup_ansible_roles:
+  - "RedHatInsights.insights-client"
+
+# Galaxy collection on Satellite + hammer import (install_ansible_roles_on_satellite.yml).
+rhel9_insights_ansible_collection: "redhatinsights.insights_client"
+rhel9_insights_ansible_collections_path: "/etc/ansible/collections"
+# Path after `ansible-galaxy collection install redhatinsights.insights_client`
+rhel9_insights_ansible_collection_path: "{{ rhel9_insights_ansible_collections_path }}/ansible_collections/redhatinsights/insights_client"
+rhel9_insights_ansible_collection_force: false
+rhel9_insights_hammer_import_role_names: "{{ rhel9_hostgroup_ansible_roles | join(',') }}"
 
 # Activation key for hosts that need standard RHEL 9 yum content (BaseOS + AppStream).
 rhel9_activation_key_name: "rhel9-standard"
@@ -19,8 +33,13 @@ rhel9_activation_key_lifecycle_environment: "Library"
 rhel9_activation_key_content_view: "Default Organization View"
 
 # Repository content_label values (hammer repository list --fields label,name).
+# RHEL 10 entries keep RHEL 9 hosts from picking up 10.x repos when both are in the CV.
 rhel9_activation_key_content_overrides:
   - label: rhel-9-for-x86_64-baseos-rpms
     override: enabled
   - label: rhel-9-for-x86_64-appstream-rpms
     override: enabled
+  - label: rhel-10-for-x86_64-baseos-rpms
+    override: disabled
+  - label: rhel-10-for-x86_64-appstream-rpms
+    override: disabled

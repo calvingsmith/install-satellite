@@ -1,0 +1,19 @@
+---
+# Libvirt hypervisor must trust Satellite (SSH key for libvirt@hypervisor, etc.).
+
+- name: Ensure libvirt compute resource
+  redhat.satellite.compute_resource:
+    username: "{{ satellite_username }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ satellite_url }}"
+    validate_certs: "{{ satellite_validate_certs }}"
+    state: present
+    name: "{{ libvirt_compute_resource_name }}"
+    organizations:
+      - "{{ satellite_organization }}"
+    locations:
+      - "{{ satellite_location }}"
+    provider: libvirt
+    provider_params:
+      url: "{{ libvirt_compute_resource_url }}"
+      display_type: "{{ libvirt_compute_resource_display_type }}"

@@ -1,5 +1,6 @@
 ---
 # Host group references CV/LCE, activation key, domain, subnet, and realm for provisioning.
+# ansible_roles requires the foreman_ansible plugin and the role imported under Configure → Ansible → Roles.
 
 - name: Ensure rhel9-server host group uses activation key
   redhat.satellite.hostgroup:
@@ -13,6 +14,7 @@
     locations:
       - "{{ satellite_location }}"
     architecture: "{{ rhel9_hostgroup_architecture }}"
+    operatingsystem: "{{ rhel9_hostgroup_operatingsystem }}"
     ptable: "{{ rhel9_hostgroup_ptable }}"
     content_source: "{{ rhel9_hostgroup_content_source | default(satellite_smart_proxy_name) }}"
     openscap_proxy: "{{ rhel9_hostgroup_openscap_proxy | default(satellite_smart_proxy_name) }}"
@@ -22,3 +24,4 @@
     lifecycle_environment: "{{ rhel9_activation_key_lifecycle_environment }}"
     content_view: "{{ rhel9_activation_key_content_view }}"
     activation_keys: "{{ rhel9_activation_key_name }}"
+    ansible_roles: "{{ rhel9_hostgroup_ansible_roles }}"
