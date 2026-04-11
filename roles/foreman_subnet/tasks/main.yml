@@ -1,0 +1,43 @@
+---
+# Foreman Subnet must match the network Satellite DHCP serves and the IdM/forward DNS
+# design (satellite-installer --foreman-proxy-dhcp-* and DNS integration).
+
+- name: Require DHCP range string for Foreman pool (two space-separated IPs)
+  ansible.builtin.assert:
+    that:
+      - dhcp_range is defined
+      - dhcp_range.split(' ') | length >= 2
+    fail_msg: >-
+      dhcp_range must match satellite-installer --foreman-proxy-dhcp-range (e.g. "192.168.122.100 192.168.122.200").
+
+- name: Derive DHCP pool bounds from dhcp_range
+  ansible.builtin.set_fact:
+    foreman_subnet_from_ip: "{{ dhcp_range.split(' ')[0] }}"
+    foreman_subnet_to_ip: "{{ dhcp_range.split(' ')[1] }}"
+
+- name: Ensure Foreman subnet exists
+  redhat.satellite.subnet:
+    username: "{{ satellite_username }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ satellite_url }}"
+    validate_certs: "{{ satellite_validate_certs }}"
+    state: present
+    name: "{{ foreman_subnet_name }}"
+    network: "{{ foreman_subnet_network }}"
+    cidr: "{{ subnet_cidr | int }}"
+    gateway: "{{ gateway_ip }}"
+    dns_primary: "{{ idm_server_ip }}"
+    domains:
+      - "{{ ipaserver_domain }}"
+    organizations:
+      - "{{ satellite_organization }}"
+    locations:
+      - "{{ satellite_location }}"
+    boot_mode: DHCP
+    ipam: DHCP
+    from_ip: "{{ foreman_subnet_from_ip }}"
+    to_ip: "{{ foreman_subnet_to_ip }}"
+    dhcp_proxy: "{{ satellite_smart_proxy_name }}"
+    tftp_proxy: "{{ satellite_smart_proxy_name }}"
+    httpboot_proxy: "{{ satellite_smart_proxy_name }}"
+    dns_proxy: "{{ satellite_smart_proxy_name }}"

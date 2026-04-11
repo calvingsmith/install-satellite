@@ -1,0 +1,137 @@
+- name: Phase3 - Post Installation Tasks
+  hosts: satellite_group
+  become: true
+  tags:
+    - post_install
+  vars_files:
+    - ~/vault/satellite.yml  # This file should contain the sensitive variables like rhsm_user, rhsm_pass, and rhsm_pool_id
+    - ~/vault/secrets.yml  # This file should contain the sensitive variables like ipadm_password and ipaadmin_password
+    - redhat_manifests.yml  # This file should contain the manifest configuration for the redhat_manifests role
+    - laptop.lab.yml  # Lab network, Foreman subnet, and IdM domain (non-sensitive)
+
+  tasks:
+    # - name: Ensure Satellite services are running
+    #   ansible.builtin.service:
+    #     name: "{{ item }}"
+    #     state: started
+    #     enabled: true
+    #   loop:
+    #     - httpd
+    #     - foreman-proxy
+    #     - pulp_workers
+    #     - qdrouterd
+    # - name: "debug manifest vars"
+    #   ansible.builtin.debug:
+    #     var: satellite_manifests
+
+    - name: "Ensure Satellite manifest configuration"
+      ansible.builtin.import_role:
+        name: subscription_manifests
+
+    - name: "Ensure Foreman subnet configuration"
+      ansible.builtin.import_role:
+        name: foreman_subnet
+      tags:
+        - tags_basic_config
+        - tags_subnet
+        - tags_pre_sync
+
+    # - name: "Ensure Satellite subscription manifest configuration"
+    #   ansible.builtin.import_role:
+    #     name: subscription_manifests
+    #   tags:
+    #     - tags_basic_config
+    #     - tags_manifest
+    #     - tags_pre_sync
+
+    - name: "Ensure Satellite Idm configuration"
+      when:
+        - satellite_pre_use_idm
+        - rex_kerberos_enabled
+      ansible.builtin.import_role:
+        name: rex_kerberos
+      tags:
+        - tags_basic_config
+        - tags_rex_kerberos
+        - tags_pre_sync
+
+    - name: "Ensure content credentials configuration"
+      ansible.builtin.import_role:
+        name: content_credentials
+      tags:
+        - tags_content_config
+        - tags_redhat_repos
+        - tags_repository_sets
+        - tags_pre_sync
+
+    - name: "Ensure repository sets configuration"
+      ansible.builtin.import_role:
+        name: repository_sets
+      tags:
+        - tags_content_config
+        - tags_redhat_repos
+        - tags_repository_sets
+        - tags_pre_sync
+
+    - name: "Ensure custom products configuration"
+      ansible.builtin.import_role:
+        name: custom_products
+      tags:
+        - tags_content_config
+        - custom_repos
+        - tags_repositories
+        - tags_pre_sync
+
+    - name: "Ensure additional repository configuration"
+      ansible.builtin.import_role:
+        name: repositories
+      tags:
+        - tags_content_config
+        - custom_repos
+        - tags_repositories
+        - tags_pre_sync
+
+    # Activation key only: --tags tags_activation_key
+    - name: "Ensure RHEL 9 activation key"
+      ansible.builtin.import_role:
+        name: rhel9_provisioning
+        tasks_from: activation_key.yml
+      tags:
+        - tags_activation_key
+        - tags_basic_config
+        - tags_pre_sync
+
+    # Host group only: --tags tags_hostgroup (add tags_activation_key first if the key does not exist yet)
+    - name: "Create rhel9-server host group in Satellite"
+      ansible.builtin.import_role:
+        name: rhel9_provisioning
+        tasks_from: hostgroup.yml
+      tags:
+        - tags_hostgroup
+        - tags_basic_config
+        - tags_pre_sync
+
+    # - name: Download and import the manifest into Satellite
+    #   ansible.builtin.command: >
+    #     hammer subscription upload --organization "{{ satellite_organization }}" --file "{{ manifest_path }}"
+    #   register: manifest_upload
+    #   changed_when: "'Successfully uploaded' in manifest_upload.stdout"
+
+    # - name: Download satellite manifest and content
+    #   ansible.builtin.command: >
+    #     hammer content-view publish --organization "{{ satellite_organization }}" --location "{{ satellite_location }}" --name "Default Content View"
+    #   register: publish_output
+    #   changed_when: "'Content view published' in publish_output.stdout"
+
+    - name: Download repository content and publish to clients
+      ansible.builtin.command: >
+        hammer repository synchronize --organization "{{ satellite_organization }}" --product "{{ item.product }}" --name "{{ item.name }}" --async
+      # loop: "{{ repository_sets }}"
+      loop: "{{ satellite_repositories }}"
+      register: sync_output
+      changed_when: "'Successfully synchronized' in sync_output.stdout"
+      tags:
+        - tags_repositories
+        - tags_pre_sync
+    #   hammer repository synchronize --organization "{{ satellite_organization }}" --name "{{ item.name }}"
+

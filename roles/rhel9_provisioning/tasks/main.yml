@@ -1,0 +1,7 @@
+---
+# Full role: activation key then host group (same as post-install.yml when both tasks_from are used).
+- name: Import RHEL 9 activation key tasks
+  ansible.builtin.import_tasks: activation_key.yml
+
+- name: Import rhel9-server host group tasks
+  ansible.builtin.import_tasks: hostgroup.yml

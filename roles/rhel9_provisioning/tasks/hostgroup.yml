@@ -1,0 +1,24 @@
+---
+# Host group references CV/LCE, activation key, domain, subnet, and realm for provisioning.
+
+- name: Ensure rhel9-server host group uses activation key
+  redhat.satellite.hostgroup:
+    username: "{{ satellite_username }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ satellite_url }}"
+    validate_certs: "{{ satellite_validate_certs }}"
+    state: present
+    organization: "{{ satellite_organization }}"
+    name: "{{ rhel9_hostgroup_name }}"
+    locations:
+      - "{{ satellite_location }}"
+    architecture: "{{ rhel9_hostgroup_architecture }}"
+    ptable: "{{ rhel9_hostgroup_ptable }}"
+    content_source: "{{ rhel9_hostgroup_content_source | default(satellite_smart_proxy_name) }}"
+    openscap_proxy: "{{ rhel9_hostgroup_openscap_proxy | default(satellite_smart_proxy_name) }}"
+    domain: "{{ ipaserver_domain }}"
+    subnet: "{{ foreman_subnet_name }}"
+    realm: "{{ ipaserver_realm }}"
+    lifecycle_environment: "{{ rhel9_activation_key_lifecycle_environment }}"
+    content_view: "{{ rhel9_activation_key_content_view }}"
+    activation_keys: "{{ rhel9_activation_key_name }}"

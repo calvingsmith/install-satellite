@@ -8,6 +8,8 @@ vm_memory_mb: 24576  # 24 GB RAM
 vm_vcpus: 4          # Satellite recommends at least 4 cores
 vm_disk_size: "200G"
 hostname: "satellite.laptop.lab" # Change to your actual FQDN
+# Integrated Smart Proxy name as registered in Satellite (hammer proxy list)
+satellite_smart_proxy_name: "{{ hostname }}"
 satellite_url: "https://{{ hostname }}"
 dns_server: "192.168.122.4"
 satellite_pre_use_idm: true

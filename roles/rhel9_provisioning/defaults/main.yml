@@ -1,0 +1,26 @@
+---
+# Host group that receives the activation key (create/update via API).
+# Domain, subnet, and realm on the host group use ipaserver_domain, foreman_subnet_name,
+# and ipaserver_realm (see laptop.lab.yml; post-install loads it via vars_files).
+rhel9_hostgroup_name: "rhel9-server"
+rhel9_hostgroup_architecture: "x86_64"
+rhel9_hostgroup_ptable: "Kickstart default"
+# Content source and OpenSCAP proxy default to integrated Satellite (hammer proxy list).
+# Override per host_vars if needed, e.g. a Capsule FQDN.
+# rhel9_hostgroup_content_source: "satellite.example.com"
+# rhel9_hostgroup_openscap_proxy: "satellite.example.com"
+
+# Activation key for hosts that need standard RHEL 9 yum content (BaseOS + AppStream).
+rhel9_activation_key_name: "rhel9-standard"
+rhel9_activation_key_description: "RHEL 9 BaseOS and AppStream for provisioned content hosts"
+
+# Must match repos published into this CV/LCE (default all-library content).
+rhel9_activation_key_lifecycle_environment: "Library"
+rhel9_activation_key_content_view: "Default Organization View"
+
+# Repository content_label values (hammer repository list --fields label,name).
+rhel9_activation_key_content_overrides:
+  - label: rhel-9-for-x86_64-baseos-rpms
+    override: enabled
+  - label: rhel-9-for-x86_64-appstream-rpms
+    override: enabled

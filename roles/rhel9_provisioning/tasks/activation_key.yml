@@ -1,0 +1,17 @@
+---
+# Activation key enables standard RHEL 9 repos at registration (content overrides).
+
+- name: Ensure RHEL 9 activation key
+  redhat.satellite.activation_key:
+    username: "{{ satellite_username }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ satellite_url }}"
+    validate_certs: "{{ satellite_validate_certs }}"
+    state: present
+    organization: "{{ satellite_organization }}"
+    name: "{{ rhel9_activation_key_name }}"
+    description: "{{ rhel9_activation_key_description }}"
+    lifecycle_environment: "{{ rhel9_activation_key_lifecycle_environment }}"
+    content_view: "{{ rhel9_activation_key_content_view }}"
+    content_overrides: "{{ rhel9_activation_key_content_overrides }}"
+    auto_attach: true
