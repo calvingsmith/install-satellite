@@ -96,10 +96,10 @@
   vars:
 
     # --- DNS Settings ---
-    ipaserver_setup_dns: true
-    ipaserver_auto_forwarders: false
-    ipaserver_forwarders:
-      - 192.168.122.1
+    ipaserver_setup_dns: "true"
+    # ipaserver_no_forwarders: true
+    # ipaserver_auto_forwarders: false
+    ipaserver_forwarders: ["192.168.122.1"]
 
     # --- Firewall Settings ---
     # The role has a built-in feature to automatically open the exact
@@ -127,6 +127,8 @@
             keys:
               - "{{ activationKey }}"
         rhc_organization: "{{ organizationID }}"
+      tags:
+        - tag_register
 
     - name: Disable all current repositories
       ansible.builtin.command: "subscription-manager repos --disable '*'"

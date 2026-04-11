@@ -12,7 +12,8 @@
 - name: "Install tuned"
   ansible.builtin.dnf:
     name: "tuned"
-    state: "present"
+    state: present
+    update_cache: true
 
 - name: "Reboot the Satellite server and wait till its up"
   ansible.builtin.reboot:

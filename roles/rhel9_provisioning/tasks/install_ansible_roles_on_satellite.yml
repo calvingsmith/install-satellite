@@ -1,6 +1,11 @@
 ---
-# Install collection on Satellite, then import into Foreman so hostgroup can assign ansible_roles.
-# Requires outbound access to Ansible Galaxy (or an offline mirror) for the install step.
+# Install RPM + collection on Satellite, then import into Foreman so hostgroup can assign ansible_roles.
+# Galaxy step may require outbound access to Ansible Galaxy (or an offline mirror) if the collection is not already present.
+
+- name: Install Insights client Ansible role RPM on Satellite
+  ansible.builtin.dnf:
+    name: "{{ rhel9_insights_ansible_rpm }}"
+    state: present
 
 - name: Stat Insights collection directory on Satellite
   ansible.builtin.stat:
