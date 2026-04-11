@@ -1,0 +1,46 @@
+---
+- name: Pilot RHEL 9 SOE Hardening and Enrollment
+  hosts: pilot_servers
+  become: true
+  vars:
+    # IDM Variables (Store sensitive credentials in Ansible Vault!)
+    idm_domain: laptop.lab
+    idm_realm: LAPTOP.LAB
+    idm_principal: admin
+    idm_password: "{{ vault_idm_password }}"
+    
+    # Compliance Variables
+    # Using the DISA STIG profile for RHEL 9
+    ssg_profile: xccdf_org.ssgproject.content_profile_stig
+    
+  roles:
+    # 1. Ensure the system is using FIPS 140-3 validated crypto
+    - role: fedora.linux_system_roles.crypto_policies
+      vars:
+        crypto_policies_policy: "FIPS"
+        crypto_policies_reboot_ok: true
+
+    # 2. Automate STIG Remediation based on DISA standards
+    - role: fedora.linux_system_roles.security_guide
+      vars:
+        security_guide_profile: "{{ ssg_profile }}"
+        security_guide_remediate: true
+
+    # 3. Centrod_integration_realm: "{{ idm_realm }}"
+        ad_integration_user: "{{ idm_principal }}"
+        ad_integration_password: "{{ idm_password }}"
+
+  tasks:
+    - name: Verify FIPS Mode Status
+      command: fips-mode-setup --check
+      register: fips_status
+      changed_when: false
+
+    - name: Report FIPS Status to Console
+      debug:
+        msg: "System FIPS status is: {{ fips_status.stdout }}"
+
+    - name: Finalize SELinux Policy
+      selinux:
+        policy: targeted
+        state: enforcing
