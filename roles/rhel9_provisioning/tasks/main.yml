@@ -1,9 +1,9 @@
 ---
-# Full role: activation key, Insights collection install/import, then host group.
+# Full role: activation key, Insights role RPM + hammer import, then host group.
 - name: Import RHEL 9 activation key tasks
   ansible.builtin.import_tasks: activation_key.yml
 
-- name: Import Insights Ansible collection install and Satellite role import
+- name: Import Insights Ansible role RPM install and Satellite hammer import
   ansible.builtin.import_tasks: install_ansible_roles_on_satellite.yml
 
 - name: Import rhel9-server host group tasks

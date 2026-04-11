@@ -109,9 +109,9 @@
         - tags_basic_config
         - tags_pre_sync
 
-    # Insights collection + Foreman import (required before hostgroup assigns ansible_roles).
+    # Insights Ansible role RPM + hammer import (required before hostgroup assigns ansible_roles).
     # Only this step: --tags tags_insights_ansible
-    - name: "Install Insights Ansible collection on Satellite and import roles"
+    - name: "Install Insights Ansible role RPM on Satellite and import roles"
       ansible.builtin.import_role:
         name: rhel9_provisioning
         tasks_from: install_ansible_roles_on_satellite.yml
