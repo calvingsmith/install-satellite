@@ -1,0 +1,14 @@
+---
+# Requires a running Foreman API (post-install). See redhat.satellite.setting module.
+
+- name: Apply Foreman/Satellite settings
+  redhat.satellite.setting:
+    username: "{{ satellite_username }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ satellite_url }}"
+    validate_certs: "{{ satellite_validate_certs }}"
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+  loop: "{{ satellite_foreman_settings }}"
+  loop_control:
+    label: "{{ item.name }}"

@@ -1,0 +1,5 @@
+---
+# Foreman/Satellite settings (Administer → Settings); see hammer settings list.
+satellite_foreman_settings:
+  - name: destroy_vm_on_host_delete
+    value: true

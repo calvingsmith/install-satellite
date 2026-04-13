@@ -16,14 +16,10 @@ rhel9_hostgroup_operatingsystem: "RHEL 9.7"
 rhel9_hostgroup_ansible_roles:
   - "RedHatInsights.insights-client"
 
-# Galaxy collection on Satellite + hammer import (install_ansible_roles_on_satellite.yml).
-# RPM from RHEL repos (installed before collection/galaxy and hammer import).
+# Insights Ansible *role* RPM + hammer import (install_ansible_roles_on_satellite.yml).
 rhel9_insights_ansible_rpm: "ansiblerole-insights-client"
-rhel9_insights_ansible_collection: "RedHatInsights.insights_client"
-rhel9_insights_ansible_collections_path: "/usr/share/ansible/collections"
-# Path after `ansible-galaxy collection install redhatinsights.insights_client`
-rhel9_insights_ansible_collection_path: "{{ rhel9_insights_ansible_collections_path }}/ansible_collections/redhatinsights/insights_client"
-rhel9_insights_ansible_collection_force: false
+# Role tree installed by the RPM (verify with rpm -ql ansiblerole-insights-client).
+rhel9_insights_ansible_role_path: "/usr/share/ansible/roles/RedHatInsights.insights-client"
 rhel9_insights_hammer_import_role_names: "{{ rhel9_hostgroup_ansible_roles | join(',') }}"
 
 # Activation key for hosts that need standard RHEL 9 yum content (BaseOS + AppStream).

@@ -1,0 +1,28 @@
+---
+# Libvirt-specific vm_attrs; firmware/UEFI keys follow Foreman’s libvirt form (see also hammer host create --help).
+
+- name: Ensure libvirt compute profile
+  redhat.satellite.compute_profile:
+    username: "{{ satellite_username }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ satellite_url }}"
+    validate_certs: "{{ satellite_validate_certs }}"
+    state: present
+    name: "{{ libvirt_compute_profile_name }}"
+    compute_attributes:
+      - compute_resource: "{{ libvirt_compute_resource_name }}"
+        vm_attrs:
+          cpus: "{{ libvirt_compute_profile_cpus | int }}"
+          memory: "{{ libvirt_compute_profile_memory_bytes | int }}"
+          firmware: uefi
+          nics_attributes:
+            0:
+              type: bridge
+              bridge: ""
+              model: virtio
+          volumes_attributes:
+            0:
+              pool_name: "{{ libvirt_compute_profile_storage_pool }}"
+              capacity: "{{ libvirt_compute_profile_volume_capacity }}"
+              allocation: "{{ libvirt_compute_profile_volume_allocation }}"
+              format_type: qcow2

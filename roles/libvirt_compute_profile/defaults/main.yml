@@ -1,0 +1,9 @@
+---
+libvirt_compute_profile_name: "libvirt-default"
+libvirt_compute_profile_cpus: 2
+# Foreman libvirt memory is bytes (4 GiB).
+libvirt_compute_profile_memory_bytes: 4294967296
+libvirt_compute_profile_storage_pool: "default"
+# Initial disk for new volumes (qcow2); adjust if your pool layout differs.
+libvirt_compute_profile_volume_capacity: "32G"
+libvirt_compute_profile_volume_allocation: "32G"

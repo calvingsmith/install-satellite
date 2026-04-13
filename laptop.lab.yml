@@ -20,6 +20,7 @@ libvirt_compute_resource_name: "laptop-lab-libvirt"
 libvirt_compute_resource_url: "qemu+ssh://libvirt@192.168.122.1/system"
 libvirt_compute_resource_display_type: "vnc"
 
-ipaserver_reverse_zones:
-  - "122.168.192.in-addr.arpa"
-  - "168.192.in-addr.arpa"
+# Compute profile for libvirt (4 GiB RAM, UEFI, qcow2 disk — see roles/libvirt_compute_profile)
+libvirt_compute_profile_name: "libvirt-default"
+
+# IdM reverse DNS zones: set in install-idm.yml (ipaserver_reverse_zones) so ipa-server-install creates them.

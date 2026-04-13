@@ -100,6 +100,10 @@
     # ipaserver_no_forwarders: true
     # ipaserver_auto_forwarders: false
     ipaserver_forwarders: ["192.168.122.1"]
+    # Reverse zones for ipa-server-install (must include 122.168.192.in-addr.arpa for 192.168.122.0/24 — libvirt default net / Foreman DHCP)
+    ipaserver_reverse_zones:
+      - "122.168.192.in-addr.arpa"
+      - "168.192.in-addr.arpa"
 
     # --- Firewall Settings ---
     # The role has a built-in feature to automatically open the exact

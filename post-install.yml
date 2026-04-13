@@ -28,6 +28,14 @@
       ansible.builtin.import_role:
         name: subscription_manifests
 
+    - name: "Ensure Satellite/Foreman settings"
+      ansible.builtin.import_role:
+        name: satellite_foreman_settings
+      tags:
+        - tags_basic_config
+        - tags_satellite_settings
+        - tags_pre_sync
+
     - name: "Ensure Foreman subnet configuration"
       ansible.builtin.import_role:
         name: foreman_subnet
@@ -41,6 +49,15 @@
         name: libvirt_compute_resource
       tags:
         - tags_basic_config
+        - tags_compute_resource
+        - tags_pre_sync
+
+    - name: "Ensure libvirt compute profile"
+      ansible.builtin.import_role:
+        name: libvirt_compute_profile
+      tags:
+        - tags_basic_config
+        - tags_compute_profile
         - tags_compute_resource
         - tags_pre_sync
 
