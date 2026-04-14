@@ -1,0 +1,68 @@
+---
+# Publish the SOE PXEGrub2 template (EFI HTTP default, 10s loader timeout) to Satellite.
+#
+# Prerequisites: ansible-galaxy collection install redhat.satellite (and Python requests on the controller).
+#
+# Example:
+#   ansible-playbook httpboot-demo.yml -i inventory \
+#     -e @~/vault/satellite.yml \
+#     -e satellite_url=https://satellite.example.com \
+#     -e satellite_password=… \
+#     -e satellite_organization="Default Organization" \
+#     -e satellite_location="Default Location"
+#
+# After this, assign "SOE Kickstart Default PXEGrub2" to your OS or host group (Hosts → Provisioning Templates),
+# or set it as the default PXEGrub2 template for RHEL under Operating Systems.
+
+- name: Publish SOE Kickstart Default PXEGrub2 (HTTP boot demo)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    satellite_username: "{{ satellite_username | default('admin') }}"
+    satellite_validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    httpboot_demo_template_path: "{{ playbook_dir }}/templates/prov_template_soe_kickstart_default_pxegrub2.j2"
+
+  pre_tasks:
+    - name: Require Satellite connection variables
+      ansible.builtin.assert:
+        that:
+          - satellite_url is defined
+          - satellite_password is defined
+          - satellite_organization is defined
+          - satellite_location is defined
+        fail_msg: >-
+          Set satellite_url, satellite_password, satellite_organization, and satellite_location
+          (e.g. -e or a vars file). See comments at top of httpboot-demo.yml.
+
+    - name: Ensure provisioning template file exists on the controller
+      ansible.builtin.stat:
+        path: "{{ httpboot_demo_template_path }}"
+      register: httpboot_demo_template_stat
+
+    - name: Fail if template file is missing
+      ansible.builtin.assert:
+        that:
+          - httpboot_demo_template_stat.stat.exists
+        fail_msg: "Missing {{ httpboot_demo_template_path }} (clone or create the SOE PXEGrub2 template first)."
+
+  tasks:
+    - name: Ensure SOE Kickstart Default PXEGrub2 provisioning template in Satellite
+      redhat.satellite.provisioning_template:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        state: present
+        name: SOE Kickstart Default PXEGrub2
+        kind: PXEGrub2
+        file_name: "{{ httpboot_demo_template_path }}"
+        organizations:
+          - "{{ satellite_organization }}"
+        locations:
+          - "{{ satellite_location }}"
+
+    - name: Show provisioning template result summary
+      ansible.builtin.debug:
+        msg: >-
+          Template present in Satellite. Assign "SOE Kickstart Default PXEGrub2" to your OS or host group
+          (Provisioning Templates / OS PXE Grub2 defaults) so hosts pick it up for UEFI HTTP boot.
