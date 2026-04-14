@@ -3,37 +3,42 @@
 #
 # Prerequisites: ansible-galaxy collection install redhat.satellite (and Python requests on the controller).
 #
-# Example:
-#   ansible-playbook httpboot-demo.yml -i inventory \
-#     -e @~/vault/satellite.yml \
-#     -e satellite_url=https://satellite.example.com \
-#     -e satellite_password=… \
-#     -e satellite_organization="Default Organization" \
-#     -e satellite_location="Default Location"
+# Variables (aligned with post-install.yml):
+#   - ~/vault/satellite.yml — satellite_password, satellite_initial_organization, satellite_initial_location, …
+#   - ~/vault/secrets.yml — optional extra secrets if your layout uses them
+#   - laptop.lab.yml — lab network defaults (repo root)
+#   - host_vars/<satellite>/ — applied automatically when the play targets that host (see below)
 #
-# After this, assign "SOE Kickstart Default PXEGrub2" to your OS or host group (Hosts → Provisioning Templates),
-# or set it as the default PXEGrub2 template for RHEL under Operating Systems.
+# The play uses the Satellite host name so Ansible loads host_vars (e.g. satellite_url, org/location) without
+# listing them in vars_files. Use an inventory that contains the Satellite FQDN (see inventory in this repo).
+#
+# Run from the repository root:
+#   ansible-playbook -i inventory httpboot-demo.yml
+#
+# Override any value with -e, or change the play host (e.g. duplicate host_vars for another FQDN).
+#
+# The playbook also associates that template with the RHEL 9 operating system and sets it as the
+# default PXEGrub2 template for that OS. Narrow the OS search if you have multiple RHEL 9 minors:
+#   -e 'httpboot_demo_os_search=name = "RedHat" and major = 9 and minor = "7"'
+#
+# If the API returns no existing template associations (unusual), set
+# httpboot_demo_existing_provisioning_templates to the full list of template names to preserve.
 
 - name: Publish SOE Kickstart Default PXEGrub2 (HTTP boot demo)
-  hosts: localhost
+  hosts: satellite.laptop.lab
+  connection: local
   gather_facts: false
+  vars_files:
+    - "~/vault/satellite.yml"
+    - "~/vault/secrets.yml"
+    - "{{ playbook_dir }}/laptop.lab.yml"
   vars:
     satellite_username: "{{ satellite_username | default('admin') }}"
     satellite_validate_certs: "{{ satellite_validate_certs | default(true) }}"
     httpboot_demo_template_path: "{{ playbook_dir }}/templates/prov_template_soe_kickstart_default_pxegrub2.j2"
+    httpboot_demo_pxegrub2_name: SOE Kickstart Default PXEGrub2
 
   pre_tasks:
-    - name: Require Satellite connection variables
-      ansible.builtin.assert:
-        that:
-          - satellite_url is defined
-          - satellite_password is defined
-          - satellite_organization is defined
-          - satellite_location is defined
-        fail_msg: >-
-          Set satellite_url, satellite_password, satellite_organization, and satellite_location
-          (e.g. -e or a vars file). See comments at top of httpboot-demo.yml.
-
     - name: Ensure provisioning template file exists on the controller
       ansible.builtin.stat:
         path: "{{ httpboot_demo_template_path }}"
@@ -61,8 +66,79 @@
         locations:
           - "{{ satellite_location }}"
 
+    - name: Resolve Foreman search string for RHEL 9 OS (override with -e httpboot_demo_os_search=...)
+      ansible.builtin.set_fact:
+        httpboot_demo_os_search_effective: "{{ httpboot_demo_os_search | default('name = \"RedHat\" and major = 9') }}"
+
+    - name: Look up RHEL 9 operating system (full API record)
+      redhat.satellite.resource_info:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        resource: operatingsystems
+        search: "{{ httpboot_demo_os_search_effective }}"
+        full_details: true
+      register: httpboot_rhel9_os
+
+    - name: Require exactly one operating system for httpboot_demo_os_search_effective
+      ansible.builtin.assert:
+        that:
+          - httpboot_rhel9_os.resources | length == 1
+        fail_msg: >-
+          Expected one OS for search [{{ httpboot_demo_os_search_effective }}], got {{ httpboot_rhel9_os.resources | length }}.
+          Add a minor (e.g. and minor = "7") or adjust the search string.
+
+    - name: Cache OS entity and base provisioning template names
+      ansible.builtin.set_fact:
+        httpboot_demo_os_entity: "{{ httpboot_rhel9_os.resources[0] }}"
+        httpboot_demo_base_template_names: >-
+          {{
+            httpboot_demo_existing_provisioning_templates
+            if httpboot_demo_existing_provisioning_templates is defined
+            else (httpboot_rhel9_os.resources[0].provisioning_templates | default([], true) | map(attribute='name') | list)
+          }}
+
+    - name: Merge SOE PXEGrub2 into provisioning template list
+      ansible.builtin.set_fact:
+        httpboot_demo_merged_template_names: "{{ httpboot_demo_base_template_names | union([httpboot_demo_pxegrub2_name]) | unique | list }}"
+
+    - name: Refuse to replace OS templates with only the SOE entry (would drop other associations)
+      when:
+        - httpboot_demo_existing_provisioning_templates is not defined
+        - httpboot_demo_base_template_names | length == 0
+      ansible.builtin.fail:
+        msg: >-
+          No provisioning_templates linked on this OS and httpboot_demo_existing_provisioning_templates was not set.
+          Pass the full list of template names to keep, e.g.
+          -e '{"httpboot_demo_existing_provisioning_templates":["Kickstart default","Kickstart default finish",...]}'
+
+    - name: Associate merged provisioning templates with the RHEL 9 operating system
+      redhat.satellite.operatingsystem:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        state: present
+        name: "{{ httpboot_demo_os_entity.name }}"
+        major: "{{ httpboot_demo_os_entity.major }}"
+        minor: "{{ httpboot_demo_os_entity.minor }}"
+        os_family: "{{ httpboot_demo_os_entity.family }}"
+        provisioning_templates: "{{ httpboot_demo_merged_template_names }}"
+
+    - name: Set default PXEGrub2 template for RHEL 9 to SOE Kickstart Default PXEGrub2
+      redhat.satellite.os_default_template:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        state: present
+        operatingsystem: "{{ httpboot_demo_os_entity.title }}"
+        template_kind: PXEGrub2
+        provisioning_template: "{{ httpboot_demo_pxegrub2_name }}"
+
     - name: Show provisioning template result summary
       ansible.builtin.debug:
         msg: >-
-          Template present in Satellite. Assign "SOE Kickstart Default PXEGrub2" to your OS or host group
-          (Provisioning Templates / OS PXE Grub2 defaults) so hosts pick it up for UEFI HTTP boot.
+          Template uploaded, linked to OS [{{ httpboot_demo_os_entity.title }}], and set as default PXEGrub2.
+          Rebuild discovery or provisioned hosts as needed for UEFI HTTP boot.
