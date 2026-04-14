@@ -1,0 +1,21 @@
+---
+# Installs /etc/libvirt/hooks/qemu.d/50-bootmenu (libvirt >= 6.5).
+# Foreman/Satellite libvirt uses fog-libvirt, which does not emit <bootmenu> in
+# generated domain XML; this hypervisor-side filter applies it for every new boot.
+
+- name: Ensure libvirt hooks qemu.d directory exists
+  ansible.builtin.file:
+    path: /etc/libvirt/hooks/qemu.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install qemu.d bootmenu hook (XML filter)
+  ansible.builtin.copy:
+    src: libvirt_bootmenu_filter.py
+    dest: "{{ libvirt_bootmenu_hook_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart libvirtd for hook scripts

@@ -18,11 +18,25 @@
 # Override any value with -e, or change the play host (e.g. duplicate host_vars for another FQDN).
 #
 # The playbook also associates that template with the RHEL 9 operating system and sets it as the
-# default PXEGrub2 template for that OS. Narrow the OS search if you have multiple RHEL 9 minors:
+# default PXEGrub2 template for that OS. Satellite has one OS per minor (9.5, 9.6, 9.7, …); the default
+# search pins minor=7 to match roles/rhel9_provisioning (RHEL 9.7). Override if your lab uses another minor:
+#   -e httpboot_demo_rhel9_minor=6
+# Or pass a full Foreman search:
 #   -e 'httpboot_demo_os_search=name = "RedHat" and major = 9 and minor = "7"'
 #
 # If the API returns no existing template associations (unusual), set
 # httpboot_demo_existing_provisioning_templates to the full list of template names to preserve.
+#
+# HTTPS / TLS (Satellite API):
+#   If the play fails with CERTIFICATE_VERIFY_FAILED or "Basic Constraints of CA cert not marked critical",
+#   Python/OpenSSL on the controller is rejecting Satellite's chain (common with IdM or internal CAs).
+#   OpenSSL 3 is strict about CA extensions; a PEM alone may not fix it if the CA cert is old or mis-issued.
+#   Options:
+#     - This repo: place a PEM at ./ca.crt (e.g. scp idm:/etc/ipa/ca.crt). The play uses it automatically
+#       as satellite_ca_path when the file exists and you have not set satellite_ca_path elsewhere.
+#     - Still failing: use lab-only  -e satellite_validate_certs=false  (disables verification).
+#     - Production: update/reissue CA or install the CA into the system trust store on the controller;
+#       or pass  -e satellite_ca_path=/path/to/ca.pem  explicitly.
 
 - name: Publish SOE Kickstart Default PXEGrub2 (HTTP boot demo)
   hosts: satellite.laptop.lab
@@ -33,8 +47,8 @@
     - "~/vault/secrets.yml"
     - "{{ playbook_dir }}/laptop.lab.yml"
   vars:
-    satellite_username: "{{ satellite_username | default('admin') }}"
-    satellite_validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    # Do not set satellite_username / satellite_validate_certs here with |default(self)—that is circular and
+    # causes infinite templating recursion. Defaults are applied on each module below.
     httpboot_demo_template_path: "{{ playbook_dir }}/templates/prov_template_soe_kickstart_default_pxegrub2.j2"
     httpboot_demo_pxegrub2_name: SOE Kickstart Default PXEGrub2
 
@@ -50,13 +64,26 @@
           - httpboot_demo_template_stat.stat.exists
         fail_msg: "Missing {{ httpboot_demo_template_path }} (clone or create the SOE PXEGrub2 template first)."
 
+    - name: Stat optional repo-root CA for Satellite API (./ca.crt)
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/ca.crt"
+      register: httpboot_demo_ca_crt_stat
+
+    - name: Default satellite_ca_path to repo ca.crt when file exists
+      ansible.builtin.set_fact:
+        satellite_ca_path: "{{ playbook_dir }}/ca.crt"
+      when:
+        - satellite_ca_path is not defined
+        - httpboot_demo_ca_crt_stat.stat.exists
+
   tasks:
     - name: Ensure SOE Kickstart Default PXEGrub2 provisioning template in Satellite
       redhat.satellite.provisioning_template:
-        username: "{{ satellite_username }}"
+        username: "{{ satellite_username | default('admin') }}"
         password: "{{ satellite_password }}"
         server_url: "{{ satellite_url }}"
-        validate_certs: "{{ satellite_validate_certs }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
         state: present
         name: SOE Kickstart Default PXEGrub2
         kind: PXEGrub2
@@ -66,16 +93,26 @@
         locations:
           - "{{ satellite_location }}"
 
-    - name: Resolve Foreman search string for RHEL 9 OS (override with -e httpboot_demo_os_search=...)
+    - name: Resolve Foreman search string for RHEL 9 OS
       ansible.builtin.set_fact:
-        httpboot_demo_os_search_effective: "{{ httpboot_demo_os_search | default('name = \"RedHat\" and major = 9') }}"
+        httpboot_demo_os_search_effective: >-
+          {{
+            httpboot_demo_os_search
+            if httpboot_demo_os_search is defined
+            else (
+              'name = "RedHat" and major = 9 and minor = "'
+              ~ (httpboot_demo_rhel9_minor | default('7') | string)
+              ~ '"'
+            )
+          }}
 
     - name: Look up RHEL 9 operating system (full API record)
       redhat.satellite.resource_info:
-        username: "{{ satellite_username }}"
+        username: "{{ satellite_username | default('admin') }}"
         password: "{{ satellite_password }}"
         server_url: "{{ satellite_url }}"
-        validate_certs: "{{ satellite_validate_certs }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
         resource: operatingsystems
         search: "{{ httpboot_demo_os_search_effective }}"
         full_details: true
@@ -87,7 +124,8 @@
           - httpboot_rhel9_os.resources | length == 1
         fail_msg: >-
           Expected one OS for search [{{ httpboot_demo_os_search_effective }}], got {{ httpboot_rhel9_os.resources | length }}.
-          Add a minor (e.g. and minor = "7") or adjust the search string.
+          Set -e httpboot_demo_rhel9_minor=<n> to match your Satellite OS minor, or pass a full -e httpboot_demo_os_search=...
+          that returns exactly one operatingsystem (hammer os list --search 'major = 9').
 
     - name: Cache OS entity and base provisioning template names
       ansible.builtin.set_fact:
@@ -115,10 +153,11 @@
 
     - name: Associate merged provisioning templates with the RHEL 9 operating system
       redhat.satellite.operatingsystem:
-        username: "{{ satellite_username }}"
+        username: "{{ satellite_username | default('admin') }}"
         password: "{{ satellite_password }}"
         server_url: "{{ satellite_url }}"
-        validate_certs: "{{ satellite_validate_certs }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
         state: present
         name: "{{ httpboot_demo_os_entity.name }}"
         major: "{{ httpboot_demo_os_entity.major }}"
@@ -128,10 +167,11 @@
 
     - name: Set default PXEGrub2 template for RHEL 9 to SOE Kickstart Default PXEGrub2
       redhat.satellite.os_default_template:
-        username: "{{ satellite_username }}"
+        username: "{{ satellite_username | default('admin') }}"
         password: "{{ satellite_password }}"
         server_url: "{{ satellite_url }}"
-        validate_certs: "{{ satellite_validate_certs }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
         state: present
         operatingsystem: "{{ httpboot_demo_os_entity.title }}"
         template_kind: PXEGrub2

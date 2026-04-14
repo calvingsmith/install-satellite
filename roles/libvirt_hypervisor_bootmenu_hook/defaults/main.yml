@@ -1,0 +1,4 @@
+---
+# Installed on the libvirt hypervisor (not Satellite). Requires libvirt >= 6.5 (qemu.d hooks).
+libvirt_bootmenu_hook_script_path: /etc/libvirt/hooks/qemu.d/50-bootmenu
+libvirt_bootmenu_hook_libvirtd_service: libvirtd

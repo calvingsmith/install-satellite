@@ -1,5 +1,7 @@
 ---
 # Libvirt-specific vm_attrs; firmware/UEFI keys follow Foreman’s libvirt form (see also hammer host create --help).
+# Foreman uses fog-libvirt for domain XML; it does not emit <bootmenu enable='yes'/>, and vm_attrs cannot
+# enable it. For Foreman-provisioned guests, install role libvirt_hypervisor_bootmenu_hook on the hypervisor.
 
 - name: Ensure libvirt compute profile
   redhat.satellite.compute_profile:

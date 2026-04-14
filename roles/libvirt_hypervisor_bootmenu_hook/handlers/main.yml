@@ -1,0 +1,6 @@
+---
+# New hook scripts are not picked up until libvirtd restarts (see libvirt hooks doc).
+- name: Restart libvirtd for hook scripts
+  ansible.builtin.service:
+    name: "{{ libvirt_bootmenu_hook_libvirtd_service }}"
+    state: restarted

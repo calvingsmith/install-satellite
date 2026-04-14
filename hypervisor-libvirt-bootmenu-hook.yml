@@ -1,0 +1,14 @@
+---
+# Run on the KVM/libvirt hypervisor (where qemu+ssh points), not on Satellite.
+# Example:
+#   ansible-playbook hypervisor-libvirt-bootmenu-hook.yml -i 'hypervisor,' \
+#     -e ansible_host=192.168.122.1 -e ansible_user=root --ask-become-pass
+#
+# Requires libvirt >= 6.5 (qemu.d hooks). See roles/libvirt_hypervisor_bootmenu_hook/defaults/main.yml.
+
+- name: Enable UEFI boot menu for libvirt guests (hypervisor hook)
+  hosts: all
+  gather_facts: true
+  become: true
+  roles:
+    - role: libvirt_hypervisor_bootmenu_hook
