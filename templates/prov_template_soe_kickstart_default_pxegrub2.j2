@@ -52,8 +52,19 @@ test_on:
  elsif grub_default.nil?
    grub_default = 0
  end
- if grub_default.to_s =~ /\A\d+\z/
-   grub_default_render = grub_default.to_i
+ # No =~ / regex here: Safemode blocks Regexp/String matching (match3) on jailed strings.
+ gd_str = grub_default.to_s
+ grub_default_digit_only = !gd_str.empty?
+ if grub_default_digit_only
+   gi = 0
+   while grub_default_digit_only && gi < gd_str.length
+     ch = gd_str[gi]
+     grub_default_digit_only = false if ch < '0' || ch > '9'
+     gi += 1
+   end
+ end
+ if grub_default_digit_only
+   grub_default_render = gd_str.to_i
  else
    grub_default_render = "'#{grub_default}'"
  end

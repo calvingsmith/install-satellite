@@ -1,0 +1,2 @@
+{"sessionId":"afd47e","hypothesisId":"H1","location":"curl_probe","message":"HTTPS HEAD satellite.laptop.lab","data":{"dns_ipv4":"192.168.122.5","tls_handshake":"ok_with_vk","cert_verify_k":"self_signed_in_chain_continuing_anyway","hsts_header":"strict-transport-security: max-age=631139040; includeSubdomains","http_status":"302_to_users_login"},"timestamp":1745295493000}
+{"sessionId":"afd47e","hypothesisId":"H4","location":"curl_probe_no_k","message":"curl -vI without -k exit 0","data":{"exit_code":0},"timestamp":1745295515000}
