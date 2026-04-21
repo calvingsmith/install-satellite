@@ -1,0 +1,155 @@
+---
+# Install Red Hat Lightspeed in Satellite (local IOP containers): Insights-style advisor
+# recommendations and the vulnerability service (Technology Preview), without using the
+# Hybrid Cloud Console for registered hosts.
+#
+# References (Satellite 6.18):
+#   - Installing Red Hat Lightspeed in Satellite on a connected server: podman login +
+#     satellite-installer --enable-iop
+#   - Vulnerability UI is Technology Preview; install anyway for demo/lab use.
+#   - With Lightspeed in Satellite enabled, hosted Hybrid Cloud services are not used for
+#     hosts registered to this Satellite. External databases are not supported with IOP.
+#
+# Prerequisites:
+#   - Satellite Server with Podman; connected pull access to registry.redhat.io (or follow
+#     disconnected ISO/setup_containers flow outside this playbook).
+#   - On the Ansible controller: ~/.docker/config.json after `docker login` / `podman login`
+#     (Podman may use ~/.config/containers/auth.json — set lightspeed_registry_authfile_src).
+#     The registry token is stored under auths as base64; it is copied to /etc/foreman/registry-auth.json.
+#
+# Variables (override with -e):
+#   lightspeed_registry_authfile_src — path on the controller (default: $HOME/.docker/config.json)
+#   satellite_version                — optional, e.g. "6.18"; if unset, derived from rpm -q satellite
+#
+# Optional:
+#   lightspeed_skip_podman_login       — true to skip copying auth (use existing Satellite file)
+#   lightspeed_https_proxy               — if set, configure iop-cvemap-download.service for CVE map
+#   lightspeed_no_proxy                  — optional NO_PROXY for that service (default: localhost)
+#
+# Run (from repo root, adjust inventory):
+#   ansible-playbook -i inventory satellite-lightspeed-demo.yml
+
+- name: Enable Red Hat Lightspeed in Satellite (IOP — advisor + vulnerability preview)
+  hosts: satellite_group
+  become: true
+  gather_facts: true
+  vars_files:
+    - "~/vault/satellite.yml"
+    - "~/vault/secrets.yml"
+    - "{{ playbook_dir }}/laptop.lab.yml"
+  vars:
+    lightspeed_skip_podman_login: false
+    lightspeed_no_proxy: "localhost"
+    lightspeed_registry_authfile_src: "{{ lookup('env', 'HOME') }}/.docker/config.json"
+
+  pre_tasks:
+    - name: Check local Docker/Podman auth file on controller
+      when: not (lightspeed_skip_podman_login | bool)
+      ansible.builtin.stat:
+        path: "{{ lightspeed_registry_authfile_src }}"
+      delegate_to: localhost
+      become: false
+      register: lightspeed_local_auth_stat
+
+    - name: Require local auth file when installing registry credentials
+      when: not (lightspeed_skip_podman_login | bool)
+      ansible.builtin.assert:
+        that:
+          - lightspeed_local_auth_stat.stat.exists | default(false)
+          - lightspeed_local_auth_stat.stat.isreg | default(false)
+        fail_msg: >-
+          Missing {{ lightspeed_registry_authfile_src }} on the Ansible controller.
+          Run: podman login registry.redhat.io (or docker login). Or set -e lightspeed_skip_podman_login=true
+          if /etc/foreman/registry-auth.json is already configured on the Satellite.
+
+    - name: Check Satellite RPM is installed
+      ansible.builtin.command: rpm -q satellite
+      register: lightspeed_rpm_check
+      changed_when: false
+      failed_when: lightspeed_rpm_check.rc != 0
+
+  tasks:
+    - name: Query Satellite RPM version
+      when: satellite_version is not defined
+      ansible.builtin.command: rpm -q --qf '%{VERSION}' satellite
+      register: lightspeed_rpm_version
+      changed_when: false
+
+    - name: Set effective Satellite version for installer flags
+      ansible.builtin.set_fact:
+        lightspeed_satellite_version_effective: "{{ satellite_version if satellite_version is defined else lightspeed_rpm_version.stdout }}"
+
+    - name: Choose installer mode (6.18+ uses --enable-iop; 6.17 uses legacy advisor flag)
+      ansible.builtin.set_fact:
+        lightspeed_installer_uses_legacy_advisor: "{{ lightspeed_satellite_version_effective is version('6.18', '<') }}"
+
+    - name: Fail on Satellite versions older than 6.17 (no supported IOP installer in this playbook)
+      ansible.builtin.assert:
+        that:
+          - lightspeed_satellite_version_effective is version('6.17', '>=')
+        fail_msg: >-
+          Red Hat Lightspeed in Satellite (IOP) requires at least Satellite 6.17. This host reports [{{ lightspeed_satellite_version_effective }}].
+
+    - name: Install Foreman registry auth from controller Docker config (token in auths)
+      when: not (lightspeed_skip_podman_login | bool)
+      ansible.builtin.copy:
+        src: "{{ lightspeed_registry_authfile_src }}"
+        dest: /etc/foreman/registry-auth.json
+        owner: root
+        group: root
+        mode: "0600"
+      # File contains base64 credentials; avoid logging contents.
+      no_log: true
+
+    - name: Enable IOP (Lightspeed advisor + vulnerability containers) via satellite-installer
+      ansible.builtin.command:
+        argv: "{{ lightspeed_installer_argv }}"
+      register: lightspeed_installer
+      changed_when: true
+      async: 3600
+      poll: 15
+      vars:
+        lightspeed_installer_argv: >-
+          {{
+            ['satellite-installer', '--foreman-plugin-rh-cloud-enable-iop-advisor-engine', 'true']
+            if lightspeed_installer_uses_legacy_advisor | bool
+            else ['satellite-installer', '--enable-iop']
+          }}
+
+    - name: Show satellite-installer result
+      ansible.builtin.debug:
+        msg: "satellite-installer finished with rc={{ lightspeed_installer.rc | default('n/a') }}"
+
+    - name: Optional — configure HTTP proxy for CVE map downloads (Lightspeed vulnerability preview)
+      when: lightspeed_https_proxy is defined and lightspeed_https_proxy | length > 0
+      block:
+        - name: Ensure systemd override directory for iop-cvemap-download exists
+          ansible.builtin.file:
+            path: /etc/systemd/system/iop-cvemap-download.service.d
+            state: directory
+            mode: "0755"
+
+        - name: Drop in proxy environment for iop-cvemap-download.service
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/iop-cvemap-download.service.d/proxy.conf
+            mode: "0644"
+            content: |
+              [Service]
+              Environment=HTTPS_PROXY={{ lightspeed_https_proxy }}
+              Environment=NO_PROXY={{ lightspeed_no_proxy }}
+          notify: Reload systemd and restart iop-cvemap-download
+
+  post_tasks:
+    - name: Reminder — vulnerability is Technology Preview
+      ansible.builtin.debug:
+        msg: >-
+          Red Hat Lightspeed > Vulnerability in the UI is a Technology Preview. Advisor recommendations:
+          Red Hat Lightspeed > Recommendations. If hammer ping omits advisor/vulnerability services,
+          run: satellite-maintain service restart
+
+  handlers:
+    - name: Reload systemd and restart iop-cvemap-download
+      ansible.builtin.systemd:
+        daemon_reload: true
+        name: iop-cvemap-download.service
+        state: restarted

@@ -4,8 +4,8 @@
   tags:
     - post_install
   vars_files:
-    - ~/vault/satellite.yml  # This file should contain the sensitive variables like rhsm_user, rhsm_pass, and rhsm_pool_id
-    - ~/vault/secrets.yml  # This file should contain the sensitive variables like ipadm_password and ipaadmin_password
+    - ~/vault/satellite.yml  # Satellite install / lab identity (e.g. root_password, satellite_*)
+    - ~/vault/secrets.yml  # IdM passwords, cdn_*_vault (portal / manifest)
     - redhat_manifests.yml  # This file should contain the manifest configuration for the redhat_manifests role
     - laptop.lab.yml  # Lab network, Foreman subnet, and IdM domain (non-sensitive)
 

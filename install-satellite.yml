@@ -79,8 +79,8 @@
   hosts: satellite_group
   become: true
   vars_files:
-    - ~/vault/satellite.yml  # This file should contain the sensitive variables like rhsm_user, rhsm_pass, and rhsm_pool_id
-    - ~/vault/secrets.yml  # This file should contain the sensitive variables like rhsm_user, rhsm_pass, and rhsm_pool_id
+    - ~/vault/satellite.yml  # Lab / Satellite identity (e.g. root_password, activation keys)
+    - ~/vault/secrets.yml  # IdM passwords, cdn_*_vault (portal / manifest)
     - laptop.lab.yml       # This file should contain the static IP and other non-sensitive variables
   tags:
     - install
