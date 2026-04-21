@@ -37,7 +37,7 @@
     - name: Default satellite_ca_path to repo ca.crt when file exists
       ansible.builtin.set_fact:
         satellite_ca_path: "{{ playbook_dir }}/ca.crt"
-      when:
+      when: 
         - satellite_ca_path is not defined
         - httpboot_revert_ca_crt_stat.stat.exists
 

@@ -12,6 +12,10 @@ hostname: "satellite.laptop.lab" # Change to your actual FQDN
 satellite_smart_proxy_name: "{{ hostname }}"
 satellite_url: "https://{{ hostname }}"
 dns_server: "192.168.122.4"
+# Set this variable to false to skip IdM integration
+# Note: this probably means you aren't using Realms anywhere
+# unless they are AD realms, so check variable files referencing
+# realms, like hostgroups, realms, etc..
 satellite_pre_use_idm: true
 satellite_validate_certs: true
 sat_firewalld_zone: "public"
@@ -22,11 +26,6 @@ sat_firewalld_services:
   - dhcp
   - dns
   - tftp
-# Set this variable to false to skip IdM integration
-# Note: this probably means you aren't using Realms anywhere
-# unless they are AD realms, so check variable files referencing
-# realms, like hostgroups, realms, etc..
-satellite_pre_use_idm: true
 # If you are integrating with IdM and you don't want to regenerate the
 # keytab file for your realm user (because you have capsules that are currently using it)
 # set skip_prepare_realm below to true. This will avoid having

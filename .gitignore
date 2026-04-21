@@ -1,3 +1,12 @@
 .ansible/.lock
 ansible-navigator.log
 .vscode/launch.json
+
+# Lab-specific Satellite / IdM CA PEM for API TLS (see httpboot-demo.yml); place locally, do not commit
+/ca.crt
+
+# Cursor / local debug session logs
+.cursor/*.log
+
+# Python bytecode (regenerated at runtime; version-specific)
+__pycache__/

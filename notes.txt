@@ -1,6 +1,4 @@
 - IPA server 192.168.122.4 - needs to resolve everything
-from chrome b9f3363155139208e21954503122532a9efd98f3925586d14b1284d3cf99ee5a
-
 
 debian enablement
 - satellite-maintain packages install python3.12-pulp-deb
