@@ -121,59 +121,59 @@ repository_sets:
 
 ############## RHEL 8 ##################
 # RHEL 8.x kickstarts
-  - name: "Red Hat Enterprise Linux 8 for x86_64 - BaseOS (Kickstart)"
-    product: "Red Hat Enterprise Linux for x86_64"
-    repository_list:
-      - releasever: "8.10"
+#   - name: "Red Hat Enterprise Linux 8 for x86_64 - BaseOS (Kickstart)"
+#     product: "Red Hat Enterprise Linux for x86_64"
+#     repository_list:
+#       - releasever: "8.10"
 
-  - name: "Red Hat Enterprise Linux 8 for x86_64 - AppStream (Kickstart)"
-    product: "Red Hat Enterprise Linux for x86_64"
-    repository_list:
-      - releasever: "8.10"
+#   - name: "Red Hat Enterprise Linux 8 for x86_64 - AppStream (Kickstart)"
+#     product: "Red Hat Enterprise Linux for x86_64"
+#     repository_list:
+#       - releasever: "8.10"
 
-# RHEL 8 Repos
-  - name: "Red Hat Enterprise Linux 8 for x86_64 - BaseOS (RPMs)"
-    product: "Red Hat Enterprise Linux for x86_64"
-    repository_list:
-      - releasever: "8"
+# # RHEL 8 Repos
+#   - name: "Red Hat Enterprise Linux 8 for x86_64 - BaseOS (RPMs)"
+#     product: "Red Hat Enterprise Linux for x86_64"
+#     repository_list:
+#       - releasever: "8"
 
-  - name: "Red Hat Enterprise Linux 8 for x86_64 - AppStream (RPMs)"
-    product: "Red Hat Enterprise Linux for x86_64"
-    repository_list:
-      - releasever: "8"
+#   - name: "Red Hat Enterprise Linux 8 for x86_64 - AppStream (RPMs)"
+#     product: "Red Hat Enterprise Linux for x86_64"
+#     repository_list:
+#       - releasever: "8"
 
-  - name: "Red Hat Enterprise Linux 8 for x86_64 - Supplementary (RPMs)"
-    product: "Red Hat Enterprise Linux for x86_64"
-    repository_list:
-      - releasever: "8"
+#   - name: "Red Hat Enterprise Linux 8 for x86_64 - Supplementary (RPMs)"
+#     product: "Red Hat Enterprise Linux for x86_64"
+#     repository_list:
+#       - releasever: "8"
 
-  - name: "Red Hat Satellite Client 6 for RHEL 8 x86_64 (RPMs)"
-    product: "Red Hat Enterprise Linux for x86_64"
+#   - name: "Red Hat Satellite Client 6 for RHEL 8 x86_64 (RPMs)"
+#     product: "Red Hat Enterprise Linux for x86_64"
 
-  - name: "Red Hat Satellite 6 Client 2 for RHEL 8 x86_64 (RPMs)"
-    product: "Red Hat Enterprise Linux for x86_64"
+#   - name: "Red Hat Satellite 6 Client 2 for RHEL 8 x86_64 (RPMs)"
+#     product: "Red Hat Enterprise Linux for x86_64"
 
-# RHEL8 HA Repos
-  - name: "Red Hat Enterprise Linux 8 for x86_64 - High Availability (RPMs)"
-    product: "Red Hat Enterprise Linux High Availability for x86_64"
-    repository_list:
-      - releasever: "8"
+# # RHEL8 HA Repos
+#   - name: "Red Hat Enterprise Linux 8 for x86_64 - High Availability (RPMs)"
+#     product: "Red Hat Enterprise Linux High Availability for x86_64"
+#     repository_list:
+#       - releasever: "8"
 
-# RHEL 8.10 repos for LEAPP
-  - name: "Red Hat Enterprise Linux 8 for x86_64 - BaseOS (RPMs)"
-    product: "Red Hat Enterprise Linux for x86_64"
-    repository_list:
-      - releasever: "8.10"
+# # RHEL 8.10 repos for LEAPP
+#   - name: "Red Hat Enterprise Linux 8 for x86_64 - BaseOS (RPMs)"
+#     product: "Red Hat Enterprise Linux for x86_64"
+#     repository_list:
+#       - releasever: "8.10"
 
-  - name: "Red Hat Enterprise Linux 8 for x86_64 - AppStream (RPMs)"
-    product: "Red Hat Enterprise Linux for x86_64"
-    repository_list:
-      - releasever: "8.10"
+#   - name: "Red Hat Enterprise Linux 8 for x86_64 - AppStream (RPMs)"
+#     product: "Red Hat Enterprise Linux for x86_64"
+#     repository_list:
+#       - releasever: "8.10"
 
-  - name: "Red Hat Enterprise Linux 8 for x86_64 - Supplementary (RPMs)"
-    product: "Red Hat Enterprise Linux for x86_64"
-    repository_list:
-      - releasever: "8.10"
+#   - name: "Red Hat Enterprise Linux 8 for x86_64 - Supplementary (RPMs)"
+#     product: "Red Hat Enterprise Linux for x86_64"
+#     repository_list:
+#       - releasever: "8.10"
 
 ############## AAP ##################
 # Ansible Automation Platform 2.4 and 2.5

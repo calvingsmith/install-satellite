@@ -1,0 +1,9 @@
+---
+# Reversible demo state for Lightspeed > Recommendations (IOP advisor). Apply on a content host,
+# wait for inventory/advisor processing, then review Red Hat Lightspeed > Recommendations.
+lightspeed_demo_recommendation_state: present  # present | absent
+
+# How to trigger advisor-style findings (pick one; lab-only).
+# - firewalld: stop/disable firewalld (strong signal on hosts expected to run a firewall).
+# - sysctl_ip_forward: set net.ipv4.ip_forward=1 (often surfaces as a networking/hardening hit).
+lightspeed_demo_recommendation_method: firewalld

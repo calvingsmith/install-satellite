@@ -1,0 +1,145 @@
+---
+# Apply lab-only demo roles on RHEL 9 hosts registered to Satellite (inventory + Lightspeed IOP).
+#
+# Recommendation demo (lightspeed_demo_recommendation): reversible misconfiguration surfaced in
+#   Red Hat Lightspeed > Recommendations after advisor processing.
+# Vulnerability demo (lightspeed_demo_vulnerability): adjust installed RPMs so Lightspeed > Vulnerability
+#   can correlate CVEs (requires CVE map sync on Satellite and often an older NVR from your repos).
+#
+# Import these roles into Satellite for assignment via host group:
+#   1. Copy roles/lightspeed_demo_recommendation and roles/lightspeed_demo_vulnerability to the Satellite
+#      (or Capsule) Ansible role path, e.g. /usr/share/ansible/roles/
+#   2. hammer ansible roles import --proxy-id <ID> \
+#        --role-names lightspeed_demo_recommendation,lightspeed_demo_vulnerability
+#   3. Assign roles in the UI or hammer host/hostgroup, then run Remote Execution job from Satellite if desired.
+#
+# === Optional: provision a VM from Satellite (nested host group rhel9-server/lightspeed-demo) ===
+# Requires satellite-lightspeed-demo.yml (or equivalent) to have created the nested group; post-install must
+# have created the parent rhel9-server host group with libvirt compute resource, subnet, realm, etc.
+# The libvirt compute profile must attach guests to the NAT network (vm_network); see roles/libvirt_compute_profile
+# and post-install.yml, or ansible-playbook -i inventory post-install.yml --tags libvirt_compute_profile_refresh.
+# Creates a managed host, sets build context, and requests the compute resource to start the guest.
+#
+#   ansible-playbook -i inventory lightspeed-demo-client.yml --tags lightspeed_demo_provision
+#
+# Variables (override with -e):
+#   lightspeed_demo_provision_vm     — default true for the provision play; set false to skip
+#   lightspeed_demo_vm_fqdn          — default test-ls.laptop.lab
+#   lightspeed_demo_hostgroup_parent  — default rhel9-server (match rhel9_provisioning / satellite-lightspeed-demo)
+#   lightspeed_demo_hostgroup_name    — nested segment; default lightspeed-demo (full title parent/child)
+#   lightspeed_demo_provision_wait_ssh — default true; wait for SSH on the new guest before the next play
+#   lightspeed_demo_vm_wait_host      — host/IP for wait_for (default: lightspeed_demo_vm_fqdn); use if DNS lags
+#   lightspeed_demo_provision_ssh_wait_delay — seconds before first TCP check (default 90)
+#   lightspeed_demo_provision_ssh_wait_timeout — max seconds to wait for port 22 (default 3600)
+#
+# HTTPS: place ./ca.crt in the repo root (see httpboot-demo.yml) or set satellite_ca_path / satellite_validate_certs.
+#
+# Run demo roles only (after the VM is reachable over SSH):
+#   ansible-playbook -i inventory lightspeed-demo-client.yml --limit test-ls.laptop.lab
+#
+# Tags:
+#   lightspeed_demo_provision — Satellite API: create host + build + start VM
+#   lightspeed_demo_recommendation, lightspeed_demo_vulnerability — role tasks (unchanged)
+
+- name: Provision Lightspeed demo VM via Satellite
+  hosts: satellite_group
+  connection: local
+  gather_facts: false
+  tags:
+    - lightspeed_demo_provision
+  vars_files:
+    - "~/vault/satellite.yml"
+    - "~/vault/secrets.yml"
+    - "{{ playbook_dir }}/laptop.lab.yml"
+  vars:
+    lightspeed_demo_provision_vm: true
+    lightspeed_demo_vm_fqdn: test-ls.laptop.lab
+    lightspeed_demo_hostgroup_parent: "{{ rhel9_hostgroup_name | default('rhel9-server') }}"
+    lightspeed_demo_hostgroup_name: lightspeed-demo
+    lightspeed_demo_provision_wait_ssh: true
+    lightspeed_demo_provision_ssh_wait_delay: 90
+    lightspeed_demo_provision_ssh_wait_timeout: 3600
+
+  pre_tasks:
+    - name: Skip Satellite provision play when disabled
+      when: not (lightspeed_demo_provision_vm | default(true) | bool)
+      ansible.builtin.meta: end_play
+
+    - name: Stat optional repo-root CA for Satellite API (./ca.crt)
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/ca.crt"
+      register: lightspeed_client_ca_stat
+
+    - name: Default satellite_ca_path to repo ca.crt when file exists
+      ansible.builtin.set_fact:
+        satellite_ca_path: "{{ playbook_dir }}/ca.crt"
+      when:
+        - satellite_ca_path is not defined
+        - lightspeed_client_ca_stat.stat.exists
+
+    - name: Require root_password in vault for managed host kickstart (root_pass)
+      ansible.builtin.assert:
+        that:
+          - root_password is defined
+          - root_password | length > 0
+        fail_msg: >-
+          Define root_password in ~/vault/satellite.yml so Satellite can inject the kickstart root password.
+
+  tasks:
+    - name: Compute Foreman host group title (nested)
+      ansible.builtin.set_fact:
+        lightspeed_demo_hostgroup_title: "{{ lightspeed_demo_hostgroup_parent ~ '/' ~ lightspeed_demo_hostgroup_name }}"
+
+    - name: Ensure managed host exists, is in build mode, and libvirt guest is started
+      redhat.satellite.host:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        name: "{{ lightspeed_demo_vm_fqdn }}"
+        organization: "{{ satellite_organization }}"
+        location: "{{ satellite_location }}"
+        hostgroup: "{{ lightspeed_demo_hostgroup_title }}"
+        managed: true
+        build: true
+        root_pass: "{{ root_password }}"
+        compute_attributes:
+          start: "1"
+      run_once: true
+
+    - name: Wait for guest SSH after provisioning (kickstart / first boot)
+      when: lightspeed_demo_provision_wait_ssh | default(true) | bool
+      ansible.builtin.wait_for:
+        host: "{{ lightspeed_demo_vm_wait_host | default(lightspeed_demo_vm_fqdn) }}"
+        port: 22
+        delay: "{{ lightspeed_demo_provision_ssh_wait_delay | int }}"
+        timeout: "{{ lightspeed_demo_provision_ssh_wait_timeout | int }}"
+        state: started
+      delegate_to: localhost
+      run_once: true
+
+    - name: Provision summary
+      ansible.builtin.debug:
+        msg: >-
+          Satellite is building {{ lightspeed_demo_vm_fqdn }} in host group [{{ lightspeed_demo_hostgroup_title }}].
+          When kickstart finishes, add ansible_host if needed and run this playbook with
+          --limit {{ lightspeed_demo_vm_fqdn }} (omit --tags lightspeed_demo_provision) to apply demo roles.
+      run_once: true
+
+- name: Lightspeed IOP demo — recommendation and vulnerability triggers
+  hosts: lightspeed_demo_clients
+  become: true
+  gather_facts: true
+  vars_files:
+    - "~/vault/satellite.yml"
+    - "~/vault/secrets.yml"
+    - "{{ playbook_dir }}/laptop.lab.yml"
+  roles:
+    - role: lightspeed_demo_recommendation
+      tags:
+        - lightspeed_demo_recommendation
+    - role: lightspeed_demo_vulnerability
+      tags:
+        - lightspeed_demo_vulnerability

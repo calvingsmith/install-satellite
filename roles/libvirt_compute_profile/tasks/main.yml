@@ -17,10 +17,11 @@
           cpus: "{{ libvirt_compute_profile_cpus | int }}"
           memory: "{{ libvirt_compute_profile_memory_bytes | int }}"
           firmware: uefi
+          # NAT virtual network (laptop.lab.yml vm_network); empty bridge breaks virDomainCreate (MTU on '').
           nics_attributes:
             0:
-              type: bridge
-              bridge: ""
+              type: network
+              network: "{{ vm_network | default('default') }}"
               model: virtio
           volumes_attributes:
             0:

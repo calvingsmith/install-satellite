@@ -7,3 +7,10 @@ idm.laptop.lab
 [laptop_lab]
 idm.laptop.lab
 satellite.laptop.lab
+
+[lightspeed_demo_clients]
+test-ls.laptop.lab
+
+[clients]
+test61.laptop.lab
+test-ls.laptop.lab

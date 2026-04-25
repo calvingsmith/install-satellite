@@ -6,12 +6,14 @@ ansible_python_interpreter: /usr/bin/python3
 static_ip: 192.168.122.5
 vm_memory_mb: 24576  # 24 GB RAM
 vm_vcpus: 4          # Satellite recommends at least 4 cores
-vm_disk_size: "200G"
+vm_disk_size: "300G"
 hostname: "satellite.laptop.lab" # Change to your actual FQDN
 # Integrated Smart Proxy name as registered in Satellite (hammer proxy list)
 satellite_smart_proxy_name: "{{ hostname }}"
 satellite_url: "https://{{ hostname }}"
-dns_server: "192.168.122.4"
+# NM primary DNS (eth0; install-satellite Phase 1) — must be IdM so laptop.lab + IdM forwarders work.
+# Same as idm_server_ip in laptop.lab.yml / group_vars/laptop_lab.yml; default if inventory omits them.
+dns_server: "{{ idm_server_ip | default('192.168.122.4') }}"
 # Set this variable to false to skip IdM integration
 # Note: this probably means you aren't using Realms anywhere
 # unless they are AD realms, so check variable files referencing

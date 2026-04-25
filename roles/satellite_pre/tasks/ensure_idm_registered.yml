@@ -18,15 +18,20 @@
     path: "/etc/hosts"
     line: "{{ ipa_client_dns_servers }}    {{ ipa_server_fqdn }}"
 
-- name: "Ensure idm server is our DNS resolver"
-  ansible.builtin.lineinfile:
-    path: "/etc/resolv.conf"
-    line: "nameserver {{ ipa_client_dns_servers }}"
-
 - name: "Ensure the client configuration"
   ansible.builtin.include_role:
     name: "redhat.rhel_idm.ipaclient"
 
+# Apply after freeipa client: the role may rewrite resolv.conf; we want IdM (authoritative for
+# laptop.lab) as the only nameserver. External zones resolve via forwarders on IdM, not 8.8.8.8.
+- name: "Ensure IdM is the system resolver (after FreeIPA client)"
+  ansible.builtin.lineinfile:
+    path: /etc/resolv.conf
+    regexp: ^nameserver\s+.*
+    line: "nameserver {{ ipa_client_dns_servers }}"
+    firstmatch: true
+  # RHEL+NetworkManager: resolv may be a generated file. If this fight persists, set ipv4.dns on
+  # the "Wired connection" to ipa_client_dns_servers in NM (same as NetworkManager in eth0.conf.j2).
 
 # #FIXME: convert to use the module when the bugs are worked out
 # - name: Add Satellite server to IPA DNS

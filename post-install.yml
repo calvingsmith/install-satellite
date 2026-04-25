@@ -1,3 +1,5 @@
+# Libvirt compute profile (roles/libvirt_compute_profile) uses vm_network from laptop.lab.yml.
+# Optional profile-only refresh: second play at end of this file, tag libvirt_compute_profile_refresh.
 - name: Phase3 - Post Installation Tasks
   hosts: satellite_group
   become: true
@@ -171,4 +173,36 @@
         - tags_repositories
         - tags_pre_sync
     #   hammer repository synchronize --organization "{{ satellite_organization }}" --name "{{ item.name }}"
+
+- name: Optional — refresh libvirt compute profile only (NAT NIC from laptop.lab.yml vm_network)
+  hosts: satellite_group
+  become: true
+  gather_facts: false
+  tags:
+    - libvirt_compute_profile_refresh
+  vars_files:
+    - ~/vault/satellite.yml
+    - ~/vault/secrets.yml
+    - redhat_manifests.yml
+    - laptop.lab.yml
+
+  tasks:
+    - name: Look up libvirt compute resource (skip if not created yet)
+      ignore_errors: true
+      redhat.satellite.resource_info:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        resource: compute_resources
+        search: 'name = "{{ libvirt_compute_resource_name }}"'
+      register: post_install_libvirt_cr
+      changed_when: false
+
+    - name: Refresh libvirt compute profile with correct NAT NIC
+      when:
+        - post_install_libvirt_cr is succeeded
+        - post_install_libvirt_cr.resources | default([]) | length > 0
+      ansible.builtin.include_role:
+        name: libvirt_compute_profile
 

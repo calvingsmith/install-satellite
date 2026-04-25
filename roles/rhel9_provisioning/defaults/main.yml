@@ -6,7 +6,7 @@ rhel9_hostgroup_name: "rhel9-server"
 rhel9_hostgroup_architecture: "x86_64"
 rhel9_hostgroup_ptable: "Kickstart default"
 # Foreman OS title (Hosts → Operating Systems, or hammer os list); not the shorthand "RHEL 9.7".
-rhel9_hostgroup_operatingsystem: "RHEL 9.7"
+rhel9_hostgroup_operatingsystem: "RedHat 9.7"
 # Content source and OpenSCAP proxy default to integrated Satellite (hammer proxy list).
 # Override per host_vars if needed, e.g. a Capsule FQDN.
 # rhel9_hostgroup_content_source: "satellite.example.com"

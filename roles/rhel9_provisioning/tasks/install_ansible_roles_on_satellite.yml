@@ -20,16 +20,17 @@
       Expected role directory {{ rhel9_insights_ansible_role_path }} missing after installing {{ rhel9_insights_ansible_rpm }}.
       Override rhel9_insights_ansible_role_path (see rpm -ql {{ rhel9_insights_ansible_rpm }}).
 
+# --output is a global hammer option; it must follow "hammer", not the subcommand.
 - name: Get Smart Proxy ID for Ansible role import
   ansible.builtin.command:
     argv:
       - hammer
+      - "--output"
+      - json
       - proxy
       - info
       - "--name"
       - "{{ satellite_smart_proxy_name }}"
-      - "--output"
-      - json
 
   register: rhel9_insights_proxy_info
   changed_when: false
@@ -46,7 +47,7 @@
       - satellite_ansible_smart_proxy_id is defined
       - satellite_ansible_smart_proxy_id | string | length > 0
     fail_msg: >-
-      Could not read id from `hammer proxy info --name {{ satellite_smart_proxy_name }} --output json`.
+      Could not read id from `hammer --output json proxy info --name {{ satellite_smart_proxy_name }}`.
 
 - name: Import Insights Ansible role(s) into Satellite from Smart Proxy
   ansible.builtin.command:

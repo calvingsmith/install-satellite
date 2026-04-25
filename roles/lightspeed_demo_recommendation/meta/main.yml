@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: lightspeed_demo_recommendation
+  author: install_satellite
+  description: >
+    Lab-only reversible settings to surface findings in Satellite Lightspeed > Recommendations (IOP advisor).
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: EL
+      versions:
+        - "9"

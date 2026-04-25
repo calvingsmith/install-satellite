@@ -1,0 +1,5 @@
+---
+# Used when hosts are in the [laptop_lab] group (idm, satellite, …). Keep in sync with idm_server_ip
+# in laptop.lab.yml. IdM/FreeIPA BIND is authoritative for laptop.lab; it forwards to gateway_ip
+# in install-idm.yml (ipaserver_forwarders) for non-lab / internet name resolution.
+idm_server_ip: "192.168.122.4"

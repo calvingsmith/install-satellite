@@ -1,8 +1,16 @@
 ---
+# DNS layout for laptop.lab:
+#   - idm_server_ip: FreeIPA is authoritative for laptop.lab (A/PTR, realm DNS).
+#   - gateway_ip: libvirt (or host) forwarder; install-idm sets ipaserver_forwarders: [ gateway_ip ]
+#     so IdM resolves the rest of the world without clients needing a public resolver.
+#   - Satellite and clients: use idm for resolv/NetworkManager (not the gateway) so *.laptop.lab and
+#     forwarders are consistent. Exception: the IdM VM in Phase 1 (install-idm) uses the gateway
+#     until the IPA service is up — see host_vars/idm.laptop.lab (dns_server).
 vm_network: "default" # Assuming libvirt default network is being used
 subnet_cidr: "24"
 gateway_ip: "192.168.122.1"
 satellite_server_ip: "192.168.122.5"
+# Must match group_vars/laptop_lab idm_server_ip
 idm_server_ip: "192.168.122.4"
 
 # --- Core IdM Settings ---

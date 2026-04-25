@@ -4,7 +4,11 @@ type=ethernet
 interface-name=eth0
 
 [ipv4]
+# dns = IdM (Satellite) or gateway (IdM pre-install) — see laptop.lab.yml
 method=manual
 address1={{ static_ip }}/{{ subnet_cidr }}
 gateway={{ gateway_ip }}
+# Semicolon = multiple; primary should be the lab authorative DNS (IdM) for Satellite, not 8.8.8.8
 dns={{ dns_server }}
+# Keep NetworkManager in charge of resolv; avoid a second public resolver that bypasses IdM.
+ignore-auto-dns=true

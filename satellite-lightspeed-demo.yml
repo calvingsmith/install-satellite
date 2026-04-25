@@ -28,6 +28,18 @@
 #
 # Run (from repo root, adjust inventory):
 #   ansible-playbook -i inventory satellite-lightspeed-demo.yml
+#
+# Demo roles for content hosts (Recommendations + Vulnerability UI):
+#   roles/lightspeed_demo_recommendation, roles/lightspeed_demo_vulnerability
+# This playbook can copy them to the Satellite, hammer-import them, and create a nested host group
+#   <rhel9-server>/lightspeed-demo (clone of rhel9-server) with those roles assigned.
+# Requires the parent host group rhel9-server (e.g. post-install.yml tags_hostgroup) to exist first.
+#
+# Optional (disable host group / role sync):
+#   -e lightspeed_demo_configure_hostgroup=false
+#
+# Override nested group name or parent:
+#   -e lightspeed_demo_hostgroup_parent=rhel9-server -e lightspeed_demo_hostgroup_name=lightspeed-demo
 
 - name: Enable Red Hat Lightspeed in Satellite (IOP — advisor + vulnerability preview)
   hosts: satellite_group
@@ -41,6 +53,14 @@
     lightspeed_skip_podman_login: false
     lightspeed_no_proxy: "localhost"
     lightspeed_registry_authfile_src: "{{ lookup('env', 'HOME') }}/.docker/config.json"
+    lightspeed_demo_configure_hostgroup: true
+    lightspeed_demo_hostgroup_parent: "{{ rhel9_hostgroup_name | default('rhel9-server') }}"
+    lightspeed_demo_hostgroup_name: lightspeed-demo
+    lightspeed_demo_hammer_import_role_names: lightspeed_demo_recommendation,lightspeed_demo_vulnerability
+    lightspeed_demo_hostgroup_ansible_roles:
+      - RedHatInsights.insights-client
+      - lightspeed_demo_recommendation
+      - lightspeed_demo_vulnerability
 
   pre_tasks:
     - name: Check local Docker/Podman auth file on controller
@@ -139,6 +159,56 @@
               Environment=NO_PROXY={{ lightspeed_no_proxy }}
           notify: Reload systemd and restart iop-cvemap-download
 
+    - name: Push Lightspeed demo Ansible roles to Satellite and import into Foreman
+      when: lightspeed_demo_configure_hostgroup | bool
+      tags:
+        - lightspeed_demo_hostgroup
+      block:
+        - name: Copy Lightspeed demo role trees to /usr/share/ansible/roles on Satellite
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/roles/{{ item }}"
+            dest: /usr/share/ansible/roles/
+            owner: root
+            group: root
+          loop:
+            - lightspeed_demo_recommendation
+            - lightspeed_demo_vulnerability
+
+        # --output is a global hammer option; it must follow "hammer", not the subcommand.
+        - name: Get Smart Proxy ID for Ansible role import
+          ansible.builtin.command:
+            argv:
+              - hammer
+              - "--output"
+              - json
+              - proxy
+              - info
+              - "--name"
+              - "{{ satellite_smart_proxy_name }}"
+          register: lightspeed_demo_proxy_info
+          changed_when: false
+
+        - name: Set Smart Proxy ID for hammer ansible import
+          vars:
+            _proxy: "{{ lightspeed_demo_proxy_info.stdout | from_json }}"
+          ansible.builtin.set_fact:
+            lightspeed_demo_ansible_proxy_id: "{{ _proxy.id | default(_proxy.Id) }}"
+
+        - name: Import Lightspeed demo Ansible roles into Satellite
+          ansible.builtin.command:
+            argv:
+              - hammer
+              - ansible
+              - roles
+              - import
+              - "--proxy-id"
+              - "{{ lightspeed_demo_ansible_proxy_id | string }}"
+              - "--role-names"
+              - "{{ lightspeed_demo_hammer_import_role_names }}"
+          register: lightspeed_demo_hammer_import
+          changed_when: lightspeed_demo_hammer_import.rc == 0
+          failed_when: lightspeed_demo_hammer_import.rc != 0
+
   post_tasks:
     - name: Reminder — vulnerability is Technology Preview
       ansible.builtin.debug:
@@ -153,3 +223,80 @@
         daemon_reload: true
         name: iop-cvemap-download.service
         state: restarted
+
+# API runs from the controller (redhat.satellite collection); host_vars for the Satellite FQDN load org/location/url.
+- name: Nested Lightspeed demo host group (child of rhel9-server)
+  hosts: satellite_group
+  connection: local
+  gather_facts: false
+  tags:
+    - lightspeed_demo_hostgroup
+  vars_files:
+    - "~/vault/satellite.yml"
+    - "~/vault/secrets.yml"
+    - "{{ playbook_dir }}/laptop.lab.yml"
+  vars:
+    lightspeed_demo_configure_hostgroup: true
+    lightspeed_demo_hostgroup_parent: "{{ rhel9_hostgroup_name | default('rhel9-server') }}"
+    lightspeed_demo_hostgroup_name: lightspeed-demo
+    lightspeed_demo_hostgroup_ansible_roles:
+      - RedHatInsights.insights-client
+      - lightspeed_demo_recommendation
+      - lightspeed_demo_vulnerability
+
+  pre_tasks:
+    - name: Skip host group configuration when disabled
+      when: not (lightspeed_demo_configure_hostgroup | default(true) | bool)
+      ansible.builtin.meta: end_play
+
+    - name: Stat optional repo-root CA for Satellite API (./ca.crt)
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/ca.crt"
+      register: lightspeed_demo_ca_crt_stat
+
+    - name: Default satellite_ca_path to repo ca.crt when file exists
+      ansible.builtin.set_fact:
+        satellite_ca_path: "{{ playbook_dir }}/ca.crt"
+      when:
+        - satellite_ca_path is not defined
+        - lightspeed_demo_ca_crt_stat.stat.exists
+
+  tasks:
+    - name: Verify parent host group exists (create it with post-install tags_hostgroup first)
+      redhat.satellite.resource_info:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        resource: hostgroups
+        search: 'name = "{{ lightspeed_demo_hostgroup_parent }}"'
+      register: lightspeed_demo_parent_hg
+      run_once: true
+
+    - name: Require exactly one parent host group for search name
+      ansible.builtin.assert:
+        that:
+          - lightspeed_demo_parent_hg.resources | default([]) | length == 1
+        fail_msg: >-
+          Expected one host group named [{{ lightspeed_demo_hostgroup_parent }}]; found {{ lightspeed_demo_parent_hg.resources | default([]) | length }}.
+          Run post-install (rhel9_provisioning host group) or fix lightspeed_demo_hostgroup_parent.
+      run_once: true
+
+    - name: Ensure nested host group exists with Lightspeed demo Ansible roles
+      redhat.satellite.hostgroup:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        organization: "{{ satellite_organization }}"
+        parent: "{{ lightspeed_demo_hostgroup_parent }}"
+        name: "{{ lightspeed_demo_hostgroup_name }}"
+        locations:
+          - "{{ satellite_location }}"
+        description: >-
+          Lab clone of {{ lightspeed_demo_hostgroup_parent }} for Lightspeed IOP recommendation + vulnerability demos.
+        ansible_roles: "{{ lightspeed_demo_hostgroup_ansible_roles }}"
+      run_once: true

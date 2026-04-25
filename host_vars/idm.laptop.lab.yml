@@ -9,5 +9,7 @@ vm_memory_mb: 4096  # 4 GB RAM
 vm_vcpus: 2          # IdM recommends at least 2 cores
 vm_disk_size: "20G"
 hostname: "idm.laptop.lab" # Change to your actual FQDN
-dns_server: "192.168.122.1"
+# Phase 1 virt-customize NetworkManager: use the libvirt host/gateway, not self — IdM (BIND) is not
+# up yet. After install-idm.yml, the server uses integrated DNS. Must match install-idm forwarders' upstream.
+dns_server: "{{ gateway_ip | default('192.168.122.1') }}"
 
