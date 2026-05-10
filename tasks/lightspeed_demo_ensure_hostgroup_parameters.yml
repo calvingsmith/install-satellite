@@ -1,0 +1,66 @@
+---
+# Same Foreman parameter logic as satellite-lightspeed-demo.yml (lightspeed_demo_hostgroup tag).
+# Run before redhat.satellite.host build so rendered kickstart includes lab_permit_root_password_ssh and
+# lab_bootstrap_authorized_key (see templates/prov_template_soe_kickstart_default.j2).
+
+- name: Stat optional repo-root CA for Satellite API (hostgroup parameters)
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/ca.crt"
+  register: lightspeed_ensure_hg_ca_stat
+  run_once: true
+
+- name: Default satellite_ca_path to repo ca.crt when file exists (hostgroup parameters)
+  ansible.builtin.set_fact:
+    satellite_ca_path: "{{ playbook_dir }}/ca.crt"
+  when:
+    - satellite_ca_path is not defined
+    - lightspeed_ensure_hg_ca_stat.stat.exists
+  run_once: true
+
+- name: Optionally set lab_bootstrap_authorized_key from controller ~/.ssh/casmith.pub
+  when: lab_bootstrap_authorized_key is not defined
+  block:
+    - name: Stat ~/.ssh/casmith.pub on the Ansible controller
+      ansible.builtin.stat:
+        path: "{{ (lookup('env', 'HOME') | default('/root', true)) ~ '/.ssh/casmith.pub' }}"
+      register: lightspeed_casmith_pub_on_controller
+    - name: Load one-line public key for Foreman host group parameter
+      when: lightspeed_casmith_pub_on_controller.stat.exists
+      ansible.builtin.set_fact:
+        lab_bootstrap_authorized_key: "{{ lookup('file', (lookup('env', 'HOME') | default('/root', true)) ~ '/.ssh/casmith.pub') | trim }}"
+  run_once: true
+
+- name: Build Foreman parameters list for SOE (password SSH + optional bootstrap key)
+  ansible.builtin.set_fact:
+    _lightspeed_demo_hg_params: >-
+      {{
+        [
+          {'name': 'lab_permit_root_password_ssh', 'parameter_type': 'boolean', 'value': true},
+          {'name': 'kernel_options', 'parameter_type': 'string', 'value': 'inst.noverifyssl'},
+          {'name': 'network_zone', 'parameter_type': 'string', 'value': 'internal'}
+        ] + (
+          [{'name': 'lab_bootstrap_authorized_key', 'parameter_type': 'string', 'value': (lab_bootstrap_authorized_key | string)}]
+          if (lab_bootstrap_authorized_key is defined and ((lab_bootstrap_authorized_key | string) | length > 0))
+          else []
+        )
+      }}
+  run_once: true
+
+- name: Ensure nested host group has SOE bootstrap Foreman parameters (and expected Ansible roles)
+  redhat.satellite.hostgroup:
+    username: "{{ satellite_username | default('admin') }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ lightspeed_foreman_server_url | default(satellite_url) }}"
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    state: present
+    organization: "{{ lightspeed_foreman_organization | default(satellite_organization) }}"
+    parent: "{{ lightspeed_demo_hostgroup_parent }}"
+    name: "{{ lightspeed_demo_hostgroup_name }}"
+    locations:
+      - "{{ lightspeed_foreman_location | default(satellite_location) }}"
+    description: >-
+      Lab clone of {{ lightspeed_demo_hostgroup_parent }} for Lightspeed IOP recommendation + vulnerability demos.
+    ansible_roles: "{{ lightspeed_demo_hostgroup_ansible_roles | default(['RedHatInsights.insights-client', 'lightspeed_demo_recommendation', 'lightspeed_demo_vulnerability']) }}"
+    parameters: "{{ _lightspeed_demo_hg_params }}"
+  run_once: true

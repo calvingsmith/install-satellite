@@ -308,12 +308,42 @@ chvt 3
 logger "Starting anaconda <%= @host %> postinstall"
 <%= snippet 'soe_kickstart_networking_setup' %>
 
-# Set firewall default zone to drop asap
-<% if host_param('network_zone') != 'default' && host_param('network_zone') != '' -%>
+# Lab: allow Ansible over SSH with root+password (RHEL 9+ default is prohibit-password for root).
+<% if host_param_true?('lab_permit_root_password_ssh') -%>
+printf '%s\n' '# lab_permit_root_password_ssh' 'PermitRootLogin yes' > /etc/ssh/sshd_config.d/90-lab-ansible-ssh.conf
+<% end -%>
+
+# Set firewall default zone and assign the primary NIC to the requested zone.
+<%# network_zone nil guard: Ruby nil != '' is TRUE so we must check for nil/falsy explicitly.
+    Without the nil check, an unset network_zone param causes --set-default-zone=drop to run but
+    the --zone= assignment fails (empty zone name), leaving the NIC in the drop default and
+    blocking SSH entirely. Only run this block when network_zone is a non-empty, non-default string. -%>
+<% nz = host_param('network_zone'); if nz && nz != 'default' && nz != '' -%>
   firewall-offline-cmd --set-default-zone=drop
-  firewall-offline-cmd --zone=<%= host_param('network_zone') -%> --change-interface=$sanitized_real
-  
-  #sed -i s/^DefaultZone=.*/DefaultZone=drop/g /etc/firewalld/firewalld.conf
+  firewall-offline-cmd --zone=<%= nz -%> --change-interface=$sanitized_real
+
+  # On RHEL 9 Anaconda creates NM keyfile connections (.nmconnection) without zone= under
+  # [connection]. When NM activates a keyfile connection it tells firewalld "no zone", which
+  # overrides the firewall-offline-cmd XML binding and lands the interface in the default
+  # (drop) zone, blocking SSH entirely. Patch all non-loopback keyfiles to include zone=<%= nz %>.
+  for _nmconn in /etc/NetworkManager/system-connections/*.nmconnection; do
+    [ -f "$_nmconn" ] || continue
+    grep -qi '^type=loopback' "$_nmconn" 2>/dev/null && continue
+    if grep -q '^zone=' "$_nmconn" 2>/dev/null; then
+      sed -i "s|^zone=.*|zone=<%= nz %>|" "$_nmconn"
+    else
+      sed -i '/^\[connection\]/a zone=<%= nz %>' "$_nmconn"
+    fi
+  done
+
+  # H2-fix: belt-and-suspenders — ensure ZONE= is set in the ifcfg file in case the
+  # soe_kickstart_ifcfg_generic_interface snippet in Foreman is outdated (missing ZONE= line).
+  [ -f "/etc/sysconfig/network-scripts/ifcfg-$sanitized_real" ] && {
+    grep -q '^ZONE=' "/etc/sysconfig/network-scripts/ifcfg-$sanitized_real" 2>/dev/null \
+      && sed -i "s|^ZONE=.*|ZONE=<%= nz %>|" "/etc/sysconfig/network-scripts/ifcfg-$sanitized_real" \
+      || printf 'ZONE=%s\n' '<%= nz %>' >> "/etc/sysconfig/network-scripts/ifcfg-$sanitized_real"
+  } || true
+
 <% end -%>
 
 # Set firewall zone drifting to no asap
@@ -410,8 +440,24 @@ chvt 1
 ) 2>&1 | tee /root/install.post.log
 <%= section_end %>
 
-# copy %pre log files into chroot
+# copy %pre log files into chroot; run UEFI BootOrder fix here, not in chrooted %post, so
+# the installer (anaconda) can see NVRAM/efivars. In a chrooted %post, efibootmgr is often a no-op on OVMF/libvirt.
 %post --nochroot
+if [ -d /sys/firmware/efi ]; then
+  /bin/bash  <<'SOEUEFIFIX' || true
+<%= snippet 'soe_uefi_prefer_disk_boot' %>
+SOEUEFIFIX
+fi
+# Lab: Foreman param lab_bootstrap_authorized_key (one line, e.g. from ~/.ssh/casmith.pub). Applied here in
+# %post --nochroot via /mnt/sysimage so it runs in installer context alongside other late-install fixes.
+# (PXEGrub2 templates cannot contain kickstart %post; see SOE Kickstart Default PXEGrub2 description.)
+<% if host_param('lab_bootstrap_authorized_key') && !host_param('lab_bootstrap_authorized_key').to_s.strip.empty? -%>
+install -d -m 700 /mnt/sysimage/root/.ssh
+cat <<'LBS_KEYEOF' >> /mnt/sysimage/root/.ssh/authorized_keys
+<%= host_param('lab_bootstrap_authorized_key').to_s.strip %>
+LBS_KEYEOF
+chmod 600 /mnt/sysimage/root/.ssh/authorized_keys
+<% end -%>
 cp -vf /tmp/*.pre.*.log /mnt/sysimage/root/
 <%= section_end %>
 

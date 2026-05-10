@@ -10,5 +10,7 @@
   hosts: all
   gather_facts: true
   become: true
+  vars_files:
+    - "{{ playbook_dir }}/laptop.lab.yml"
   roles:
     - role: libvirt_hypervisor_bootmenu_hook

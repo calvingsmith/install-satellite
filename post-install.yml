@@ -38,6 +38,176 @@
         - tags_satellite_settings
         - tags_pre_sync
 
+    - name: Discover Satellite NIC on provisioning network
+      ansible.builtin.shell: |
+        ip -br addr show | awk '/{{ satellite_server_ip | regex_escape() }}\// {print $1; exit}'
+      register: _sat_dhcp_iface
+      changed_when: false
+      failed_when: _sat_dhcp_iface.stdout | trim | length == 0
+      tags:
+        - satellite_dhcp
+
+    - name: Enable foreman-proxy DHCP plugin via satellite-installer
+      ansible.builtin.command:
+        argv:
+          - satellite-installer
+          - --foreman-proxy-dhcp
+          - 'true'
+          - --foreman-proxy-dhcp-provider
+          - isc
+          - --foreman-proxy-dhcp-managed
+          - 'true'
+          - --foreman-proxy-dhcp-interface
+          - "{{ _sat_dhcp_iface.stdout | trim }}"
+          - --foreman-proxy-dhcp-range
+          - "{{ dhcp_range }}"
+          - --foreman-proxy-dhcp-gateway
+          - "{{ gateway_ip }}"
+          - --foreman-proxy-dhcp-nameservers
+          - "{{ idm_server_ip }}"
+      register: _sat_installer_dhcp
+      changed_when: "'Installation complete' in _sat_installer_dhcp.stdout"
+      async: 1800
+      poll: 30
+      tags:
+        - satellite_dhcp
+
+    - name: Show satellite-installer DHCP result
+      ansible.builtin.debug:
+        msg: >-
+          satellite-installer (DHCP) interface={{ _sat_dhcp_iface.stdout | trim }}
+          rc={{ _sat_installer_dhcp.rc }}
+          stdout_tail={{ _sat_installer_dhcp.stdout | default('') | regex_replace('\x1b\\[[0-9;]*m','') | split('\n') | reject('equalto','') | list | last | default('(empty)') }}
+      tags:
+        - satellite_dhcp
+
+    # verify-subnet-httpboot: Enable the foreman-proxy HTTPBoot feature so the Smart Proxy serves EFI
+    # bootloaders over HTTP (default port 8000/8443). Required for the SOE PXEGrub2 template to emit the
+    # 'efi_http' GRUB menu entry — the template checks subnet.httpboot.httpboot_http_port and only renders
+    # the HTTP entry when the HTTPBoot proxy reports an HTTP port. Run with --tags satellite_httpboot to
+    # enable separately; safe to re-run (satellite-installer is idempotent).
+    - name: Enable foreman-proxy HTTPBoot plugin via satellite-installer
+      ansible.builtin.command:
+        argv:
+          - satellite-installer
+          - --foreman-proxy-httpboot
+          - 'true'
+          - --foreman-proxy-httpboot-listen-on
+          - both
+      register: _sat_installer_httpboot
+      changed_when: "'Installation complete' in _sat_installer_httpboot.stdout"
+      async: 1800
+      poll: 30
+      tags:
+        - satellite_httpboot
+
+    - name: Show satellite-installer HTTPBoot result
+      ansible.builtin.debug:
+        msg: >-
+          satellite-installer (HTTPBoot) rc={{ _sat_installer_httpboot.rc }}
+          stdout_tail={{ _sat_installer_httpboot.stdout | default('') | regex_replace('\x1b\\[[0-9;]*m','') | split('\n') | reject('equalto','') | list | last | default('(empty)') }}
+      tags:
+        - satellite_httpboot
+
+    # The grubx64.efi placed by satellite-installer (from grub2-efi-x64 RPM) is compiled with the
+    # prefix /EFI/redhat — designed for a local EFI partition. When booted via UEFI HTTP Boot it
+    # tries to fetch modules from /httpboot/EFI/redhat/x86_64-efi/, which 404s because the TFTP
+    # root only has them at grub2/x86_64-efi/. grub2-mkstandalone embeds all modules into a single
+    # self-contained EFI binary; the built-in init script redirects GRUB's prefix to the Satellite's
+    # HTTPBoot grub2 directory for grub.cfg, so no external module fetching occurs at all.
+    - name: Write HTTPBoot GRUB2 init config
+      ansible.builtin.copy:
+        # grub-httpboot-init.cfg drives idempotency: grubx64-httpboot.efi is only regenerated
+        # when this config changes (e.g. satellite_server_ip is updated).
+        # With grub2-mkimage (not mkstandalone), GRUB2 boots as a direct EFI application via
+        # UEFI HTTP. The UEFI HTTP Boot driver auto-populates $net_default_mac, $root, and
+        # $prefix from the DHCP ACK before this script runs. No insmod/net_bootp needed.
+        dest: /var/lib/tftpboot/grub2/grub-httpboot-init.cfg
+        content: |
+          configfile ${prefix}/grub.cfg
+        mode: '0644'
+        owner: foreman-proxy
+        group: foreman-proxy
+      register: _grub2_init_cfg
+      tags:
+        - satellite_httpboot
+
+    - name: Check if grubx64-httpboot.efi already exists
+      ansible.builtin.stat:
+        path: /var/lib/tftpboot/grub2/grubx64-httpboot.efi
+      register: _grubx64_httpboot_stat
+      tags:
+        - satellite_httpboot
+
+    - name: Generate GRUB2 EFI image for HTTPBoot (direct EFI, not memdisk-based)
+      # Output to grubx64-httpboot.efi, NOT grubx64.efi.
+      # grubx64.efi is owned by the foreman-bootloaders-redhat-tftpboot RPM and is restored
+      # every time satellite-installer runs. grubx64-httpboot.efi is not RPM-owned and persists.
+      #
+      # grub2-mkimage (not mkstandalone) creates a direct EFI application. When UEFI HTTP Boot
+      # loads it, GRUB2 inherits the UEFI DHCP context and automatically sets $net_default_mac,
+      # $root=(http,satellite:8000), and $prefix from the --prefix argument. No net_bootp needed.
+      # Additional modules beyond those embedded are fetched from ${prefix}/x86_64-efi/ via HTTP.
+      when: _grub2_init_cfg is changed or not _grubx64_httpboot_stat.stat.exists
+      ansible.builtin.shell: |
+        set -o pipefail
+        grub2-mkimage \
+          --format=x86_64-efi \
+          --output=/var/lib/tftpboot/grub2/grubx64-httpboot.efi \
+          --config=/var/lib/tftpboot/grub2/grub-httpboot-init.cfg \
+          --prefix='(http,{{ satellite_server_ip }}:8000)/httpboot/grub2' \
+          efinet net http configfile echo normal linux boot chain \
+          search part_gpt part_msdos fat ext2 xfs all_video gfxterm gzio \
+          reboot halt regexp sleep
+      args:
+        executable: /bin/bash
+      changed_when: true
+      tags:
+        - satellite_httpboot
+
+    # Build the global PXE/GRUB2 default config on all smart proxies. This writes the real
+    # /var/lib/tftpboot/grub2/grub.cfg (and pxelinux.cfg/default) that searches per-host
+    # configs by MAC address. Without this, the fallback "not recognized by Foreman" stub is
+    # served and GRUB drops to the interactive prompt.
+    - name: Build PXE Default on all smart proxies
+      # Writes the real /var/lib/tftpboot/grub2/grub.cfg (and pxelinux.cfg/default) that
+      # searches per-host configs by MAC address. Without this, the fallback stub is served.
+      ansible.builtin.command:
+        argv:
+          - hammer
+          - --username
+          - "{{ satellite_username | default('admin') }}"
+          - --password
+          - "{{ satellite_password }}"
+          - template
+          - build-pxe-default
+      changed_when: true
+      tags:
+        - satellite_httpboot
+
+    # verify-subnet-httpboot: Add a vendor-class "HTTPClient" class to dhcpd.conf so OVMF can do
+    # firmware-level UEFI HTTP Boot (RFC 5970). When OVMF sends a DHCP request with vendor-class-identifier
+    # "HTTPClient", dhcpd responds with an HTTP boot URI instead of a TFTP filename. This enables OVMF to
+    # download the EFI bootloader via HTTP (no TFTP), creating an UEFI HTTP Boot NVRAM entry that can
+    # appear before PXE IPv4 entries — the definition-time HTTP-before-PXE path.
+    # The filename path matches what Satellite's HTTPBoot proxy serves at /httpboot/.
+    - name: Ensure UEFI HTTP Boot (HTTPClient) vendor class is in dhcpd.conf
+      ansible.builtin.blockinfile:
+        path: /etc/dhcp/dhcpd.conf
+        insertafter: EOF
+        marker: "# {mark} UEFI HTTP Boot HTTPClient class — managed by Ansible satellite_httpboot"
+        block: |
+          # RFC 5970 / UEFI HTTP Boot: respond to firmware HTTP Boot clients with an HTTP boot URI.
+          # Requires foreman-proxy HTTPBoot feature enabled (satellite-installer --foreman-proxy-httpboot true).
+          class "UEFI-HTTP-Boot" {
+            match if option vendor-class-identifier = "HTTPClient";
+            option vendor-class-identifier "HTTPClient";
+            filename "http://{{ satellite_server_ip }}:8000/httpboot/grub2/grubx64-httpboot.efi";
+          }
+      notify: Restart dhcpd for HTTPBoot class
+      tags:
+        - satellite_httpboot
+
     - name: "Ensure Foreman subnet configuration"
       ansible.builtin.import_role:
         name: foreman_subnet
@@ -136,11 +306,25 @@
         tasks_from: install_ansible_roles_on_satellite.yml
       tags:
         - tags_insights_ansible
+        - tags_ansible_roles
         - tags_hostgroup
         - tags_basic_config
         - tags_pre_sync
 
-    # Host group only: --tags tags_hostgroup (run tags_insights_ansible first if roles are not imported yet)
+    # rhel-system-roles RPM + hammer import (required before hostgroup assigns firewall role).
+    # Only this step: --tags tags_firewall_ansible_role
+    - name: "Install rhel-system-roles RPM on Satellite and import firewall role"
+      ansible.builtin.import_role:
+        name: rhel9_provisioning
+        tasks_from: install_firewall_role_on_satellite.yml
+      tags:
+        - tags_firewall_ansible_role
+        - tags_ansible_roles
+        - tags_hostgroup
+        - tags_basic_config
+        - tags_pre_sync
+
+    # Host group only: --tags tags_hostgroup (run tags_ansible_roles first if roles are not imported yet)
     - name: "Create rhel9-server host group in Satellite"
       ansible.builtin.import_role:
         name: rhel9_provisioning
@@ -174,7 +358,13 @@
         - tags_pre_sync
     #   hammer repository synchronize --organization "{{ satellite_organization }}" --name "{{ item.name }}"
 
-- name: Optional — refresh libvirt compute profile only (NAT NIC from laptop.lab.yml vm_network)
+  handlers:
+    - name: Restart dhcpd for HTTPBoot class
+      ansible.builtin.service:
+        name: dhcpd
+        state: restarted
+
+- name: Optional — refresh libvirt compute profile only (bridge NIC from laptop.lab.yml vm_network)
   hosts: satellite_group
   become: true
   gather_facts: false
@@ -199,7 +389,7 @@
       register: post_install_libvirt_cr
       changed_when: false
 
-    - name: Refresh libvirt compute profile with correct NAT NIC
+    - name: Refresh libvirt compute profile with correct bridge NIC
       when:
         - post_install_libvirt_cr is succeeded
         - post_install_libvirt_cr.resources | default([]) | length > 0

@@ -27,3 +27,30 @@
     content_view: "{{ rhel9_activation_key_content_view }}"
     activation_keys: "{{ rhel9_activation_key_name }}"
     ansible_roles: "{{ rhel9_hostgroup_ansible_roles }}"
+    parameters:
+      - name: kernel_options
+        parameter_type: string
+        value: inst.noverifyssl
+      # tune-grub-params: force GRUB to select the EFI HTTP entry by name rather than relying on
+      # auto-detection (template checks subnet.httpboot.httpboot_http_port). This guarantees the
+      # HTTP kernel/initrd path even if the HTTPBoot proxy feature is temporarily misconfigured.
+      - name: default_grub_install_entry
+        parameter_type: string
+        value: efi_http
+      # loader_timeout: GRUB countdown before auto-boot (seconds). 2s is the template default; set
+      # here explicitly so it is visible and can be overridden per host without editing the template.
+      - name: loader_timeout
+        parameter_type: integer
+        value: 2
+      # redhat.rhel_system_roles.firewall role variables — inherited by all child host groups.
+      # firewall_default_zone: the zone Satellite REX sets as default on managed hosts.
+      - name: firewall_default_zone
+        parameter_type: string
+        value: "{{ rhel9_firewall_default_zone }}"
+      # firewall: list of rule specs consumed by redhat.rhel_system_roles.firewall.
+      # Enables SSH and explicitly disables the echo-request ICMP block (allows ping) in the
+      # internal zone.  Child host groups override individual entries by adding parameters of
+      # the same name — they do NOT need to repeat these defaults.
+      - name: firewall
+        parameter_type: array
+        value: "{{ rhel9_firewall_rules }}"

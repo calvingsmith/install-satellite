@@ -13,14 +13,38 @@ rhel9_hostgroup_operatingsystem: "RedHat 9.7"
 # rhel9_hostgroup_openscap_proxy: "satellite.example.com"
 
 # Ansible roles on the host group (foreman_ansible; role must be imported in Satellite).
+# Order matters: firewall is applied first so the network is properly configured before other roles run.
 rhel9_hostgroup_ansible_roles:
+  - "redhat.rhel_system_roles.firewall"
   - "RedHatInsights.insights-client"
 
 # Insights Ansible *role* RPM + hammer import (install_ansible_roles_on_satellite.yml).
 rhel9_insights_ansible_rpm: "ansiblerole-insights-client"
 # Role tree installed by the RPM (verify with rpm -ql ansiblerole-insights-client).
 rhel9_insights_ansible_role_path: "/usr/share/ansible/roles/RedHatInsights.insights-client"
-rhel9_insights_hammer_import_role_names: "{{ rhel9_hostgroup_ansible_roles | join(',') }}"
+# Explicit: only import the Insights role here; firewall role is imported by install_firewall_role_on_satellite.yml.
+rhel9_insights_hammer_import_role_names: "RedHatInsights.insights-client"
+
+# rhel-system-roles firewall role (install_firewall_role_on_satellite.yml + hostgroup.yml).
+rhel9_firewall_role_rpm: "rhel-system-roles"
+# Collection path after rpm install (verify with: rpm -ql rhel-system-roles | grep firewall | head -1).
+rhel9_firewall_role_path: "/usr/share/ansible/collections/ansible_collections/redhat/rhel_system_roles/roles/firewall"
+rhel9_firewall_role_name: "redhat.rhel_system_roles.firewall"
+# Default firewall zone applied by the role (firewall_default_zone role variable).
+rhel9_firewall_default_zone: "internal"
+# Firewall rules applied by the role (firewall role variable — a list of rule specifications).
+# internal zone: SSH + ensure ping (ICMP echo-request is not blocked).
+rhel9_firewall_rules:
+  - zone: internal
+    service:
+      - ssh
+    permanent: true
+    state: enabled
+  - zone: internal
+    icmp_block:
+      - echo-request
+    permanent: true
+    state: disabled
 
 # Activation key for hosts that need standard RHEL 9 yum content (BaseOS + AppStream).
 rhel9_activation_key_name: "rhel9-standard"

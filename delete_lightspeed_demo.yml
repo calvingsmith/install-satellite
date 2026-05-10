@@ -1,0 +1,67 @@
+---
+# Remove the Foreman / Satellite host record and associated compute (libvirt) guest used for the
+# Lightspeed demo. This inverts the Satellite-side effect of the first play in
+# lightspeed-demo-client.yml (redhat.satellite.host, provision tag). It does not undo anything from
+# satellite-lightspeed-demo.yml (nested host group, roles on Satellite) or the second play
+# in lightspeed-demo-client (roles on the guest: those are changes on the VM, not in Satellite).
+#
+# Foreman / Satellite: when a managed host is deleted and still linked to a compute resource with
+# a known VM UUID, the platform normally powers off and removes that VM. If a host record was
+# already removed, this run is a no-op; if a VM is orphaned on the hypervisor, clean it with virsh
+# on the libvirt host.
+#
+#   ansible-playbook -i inventory delete_lightspeed_demo.yml
+#   ansible-playbook -i inventory delete_lightspeed_demo.yml -e lightspeed_demo_vm_fqdn=other.example.com
+#   ansible-playbook -i inventory delete_lightspeed_demo.yml --check
+#
+# Same vault and host_vars for Satellite as for lightspeed-demo-client (~/vault/satellite.yml, host_vars, ca.crt).
+#
+# Tags: delete_lightspeed_demo (default for the only play; safe to re-run)
+#
+- name: Delete Lightspeed demo host from Satellite
+  hosts: satellite_group
+  connection: local
+  gather_facts: false
+  tags:
+    - delete_lightspeed_demo
+  vars_files:
+    - "~/vault/satellite.yml"
+    - "~/vault/secrets.yml"
+    - "{{ playbook_dir }}/laptop.lab.yml"
+  vars:
+    lightspeed_demo_vm_fqdn: test-ls.laptop.lab
+
+  pre_tasks:
+    - name: Stat optional repo-root CA for Satellite API (./ca.crt)
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/ca.crt"
+      register: delete_lightspeed_client_ca_stat
+
+    - name: Default satellite_ca_path to repo ca.crt when it exists
+      ansible.builtin.set_fact:
+        satellite_ca_path: "{{ playbook_dir }}/ca.crt"
+      when:
+        - satellite_ca_path is not defined
+        - delete_lightspeed_client_ca_stat.stat.exists
+
+  tasks:
+    - name: Remove managed host (stops/undefines compute VM when Foreman still tracks it)
+      redhat.satellite.host:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: absent
+        name: "{{ lightspeed_demo_vm_fqdn }}"
+        organization: "{{ satellite_organization }}"
+        location: "{{ satellite_location }}"
+      run_once: true
+
+    - name: Deletion summary
+      ansible.builtin.debug:
+        msg: >-
+          If [{{ lightspeed_demo_vm_fqdn }}] existed in Foreman, it was removed. On-client demo role
+          changes (packages, config) are not reverted. To remove the lightspeed-demo host group
+          or other Satellite config, use satellite-lightspeed-demo or post-install as appropriate.
+      run_once: true

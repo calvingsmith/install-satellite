@@ -16,11 +16,12 @@
 # === Optional: provision a VM from Satellite (nested host group rhel9-server/lightspeed-demo) ===
 # Requires satellite-lightspeed-demo.yml (or equivalent) to have created the nested group; post-install must
 # have created the parent rhel9-server host group with libvirt compute resource, subnet, realm, etc.
-# The libvirt compute profile must attach guests to the NAT network (vm_network); see roles/libvirt_compute_profile
+# The libvirt compute profile must attach guests to the host bridge (vm_network); see roles/libvirt_compute_profile
 # and post-install.yml, or ansible-playbook -i inventory post-install.yml --tags libvirt_compute_profile_refresh.
 # Creates a managed host, sets build context, and requests the compute resource to start the guest.
 #
 #   ansible-playbook -i inventory lightspeed-demo-client.yml --tags lightspeed_demo_provision
+# Teardown (remove Foreman host + linked VM on compute resource): delete_lightspeed_demo.yml
 #
 # Variables (override with -e):
 #   lightspeed_demo_provision_vm     — default true for the provision play; set false to skip
@@ -31,15 +32,99 @@
 #   lightspeed_demo_vm_wait_host      — host/IP for wait_for (default: lightspeed_demo_vm_fqdn); use if DNS lags
 #   lightspeed_demo_provision_ssh_wait_delay — seconds before first TCP check (default 90)
 #   lightspeed_demo_provision_ssh_wait_timeout — max seconds to wait for port 22 (default 3600)
+#   lightspeed_demo_flush_controller_cache — flush systemd-resolved DNS on the machine running the playbook
+#     (default: true) so test-ls FQDN resolves after IdM/forwarder update; set false to skip or on non-Fedora/RHEL
+#   lightspeed_demo_clear_known_hosts — remove test-ls from ~/.ssh/known_hosts on the controller (rebuilds change keys)
+#   lightspeed_demo_extra_known_host_names — list of extra names/IPs to clear (e.g. a static wait_for address)
+#   lightspeed_demo_controller_known_hosts_path — override path to known_hosts (default: $HOME/.ssh/known_hosts)
 #
 # HTTPS: place ./ca.crt in the repo root (see httpboot-demo.yml) or set satellite_ca_path / satellite_validate_certs.
 #
 # Run demo roles only (after the VM is reachable over SSH):
 #   ansible-playbook -i inventory lightspeed-demo-client.yml --limit test-ls.laptop.lab
+# Second play uses root + root_password from vault (same as Foreman root_pass). RHEL 9+ sshd defaults
+# to prohibit-password for root, so password SSH fails with "Invalid/incorrect password" unless the
+# SOE kickstart has applied (host param lab_permit_root_password_ssh on lightspeed-demo) — re-publish the
+# SOE template, run satellite-lightspeed-demo (lightspeed_demo_hostgroup), rebuild the VM, or on an
+# already-installed host add: PermitRootLogin yes in /etc/ssh/sshd_config.d/ and systemctl reload sshd.
+# Install sshpass on the controller for non-interactive password auth; or use key only and override
+# ansible_user / ansible_ssh_private_key_file.
 #
 # Tags:
 #   lightspeed_demo_provision — Satellite API: create host + build + start VM
 #   lightspeed_demo_recommendation, lightspeed_demo_vulnerability — role tasks (unchanged)
+
+- name: Remove stale DHCP reservation on Satellite before reprovisioning
+  hosts: satellite_group
+  gather_facts: false
+  become: true
+  tags:
+    - lightspeed_demo_provision
+  vars_files:
+    - "~/vault/satellite.yml"
+    - "~/vault/secrets.yml"
+    - "{{ playbook_dir }}/laptop.lab.yml"
+  vars:
+    lightspeed_demo_vm_fqdn: test-ls.laptop.lab
+  tasks:
+    - name: Remove stale DHCP reservation for {{ lightspeed_demo_vm_fqdn }} (omshell then curl)
+      ansible.builtin.shell: |
+        set -o pipefail
+        FQDN="{{ lightspeed_demo_vm_fqdn }}"
+        NETWORK="{{ foreman_subnet_network }}"
+        PROXY="https://$(hostname -f):9090"
+        echo "=== STALE DHCP CLEANUP for $FQDN ==="
+        if command -v omshell >/dev/null 2>&1; then
+          echo "USING_OMSHELL"
+          result=$(printf 'server 127.0.0.1\nport 7911\nconnect\nnew host\nset name = "%s"\nopen\nremove\n' "$FQDN" | omshell 2>&1 || true)
+          echo "OMSHELL_RESULT: $result"
+          echo "$result" | grep -qi "remove" && echo "OMSHELL_REMOVED" || echo "OMSHELL_NOT_REMOVED"
+        else
+          echo "OMSHELL_NOT_FOUND trying proxy REST API"
+          CERT="" KEY="" CA=""
+          for f in /etc/foreman/client_cert.pem \
+              "/etc/puppet/ssl/certs/$(hostname -f).pem" \
+              "/var/lib/puppet/ssl/certs/$(hostname -f).pem"; do
+            [ -f "$f" ] && CERT="$f" && break
+          done
+          for f in /etc/foreman/client_key.pem \
+              "/etc/puppet/ssl/private_keys/$(hostname -f).pem" \
+              "/var/lib/puppet/ssl/private_keys/$(hostname -f).pem"; do
+            [ -f "$f" ] && KEY="$f" && break
+          done
+          for f in /etc/puppet/ssl/certs/ca.pem \
+              /var/lib/puppet/ssl/certs/ca.pem \
+              /etc/foreman-proxy/foreman_ssl_ca.pem; do
+            [ -f "$f" ] && CA="$f" && break
+          done
+          echo "CERT=$CERT KEY=$KEY CA=$CA"
+          if [ -n "$CERT" ] && [ -n "$KEY" ] && [ -n "$CA" ]; then
+            ENTRIES=$(curl -sf -X GET "$PROXY/dhcp/$NETWORK" \
+              --cert "$CERT" --key "$KEY" --cacert "$CA" 2>/dev/null || echo "[]")
+            echo "SUBNET_ENTRIES: $ENTRIES"
+            IP=$(echo "$ENTRIES" | python3 -c \
+              "import json,sys; d=json.load(sys.stdin); f='$FQDN'.lower(); s=f.split('.')[0]; r=[e.get('ip','') for e in d if e.get('hostname','').lower() in (f,s) or e.get('name','').lower() in (f,s)]; print(r[0] if r else '')" \
+              2>/dev/null || true)
+            if [ -n "$IP" ]; then
+              echo "FOUND_STALE_IP=$IP"
+              curl -sf -X DELETE "$PROXY/dhcp/$NETWORK/$IP" \
+                --cert "$CERT" --key "$KEY" --cacert "$CA" \
+                2>/dev/null && echo "REST_DELETED" || echo "REST_DELETE_FAILED"
+            else
+              echo "STALE_IP_NOT_FOUND"
+            fi
+          else
+            echo "NO_CERTS_FOUND cannot delete via REST API"
+          fi
+        fi
+      args:
+        executable: /bin/bash
+      register: _dhcp_cleanup_ssh
+      failed_when: false
+      changed_when: >-
+        'OMSHELL_REMOVED' in (_dhcp_cleanup_ssh.stdout | default('')) or
+        'REST_DELETED' in (_dhcp_cleanup_ssh.stdout | default(''))
+      run_once: true # noqa: run-once[task]
 
 - name: Provision Lightspeed demo VM via Satellite
   hosts: satellite_group
@@ -59,6 +144,11 @@
     lightspeed_demo_provision_wait_ssh: true
     lightspeed_demo_provision_ssh_wait_delay: 90
     lightspeed_demo_provision_ssh_wait_timeout: 3600
+    lightspeed_demo_flush_controller_cache: true
+    lightspeed_demo_clear_known_hosts: true
+    lightspeed_demo_extra_known_host_names: []
+    # Push lab_permit_root_password_ssh + lab_bootstrap_authorized_key to Foreman before build.
+    lightspeed_demo_ensure_hostgroup_parameters: true
 
   pre_tasks:
     - name: Skip Satellite provision play when disabled
@@ -90,6 +180,279 @@
       ansible.builtin.set_fact:
         lightspeed_demo_hostgroup_title: "{{ lightspeed_demo_hostgroup_parent ~ '/' ~ lightspeed_demo_hostgroup_name }}"
 
+    - name: Ensure RHEL 9 installation medium exists in Satellite
+      ansible.builtin.import_tasks: tasks/lightspeed_demo_ensure_rhel9_medium.yml
+
+    - name: Ensure lightspeed-demo hostgroup has Katello content fields set directly
+      redhat.satellite.hostgroup:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        organization: "{{ satellite_organization }}"
+        parent: "{{ lightspeed_demo_hostgroup_parent }}"
+        name: "{{ lightspeed_demo_hostgroup_name }}"
+        content_source: "{{ rhel9_hostgroup_content_source | default(satellite_smart_proxy_name) | default('satellite.laptop.lab') }}"
+        lifecycle_environment: "{{ rhel9_activation_key_lifecycle_environment | default('Library') }}"
+        content_view: "{{ rhel9_activation_key_content_view | default('Default Organization View') }}"
+        activation_keys: "{{ rhel9_activation_key_name | default('rhel9-standard') }}"
+      run_once: true # noqa: run-once[task]
+
+    - name: Ensure lightspeed-demo hostgroup parameters are set in Satellite
+      ansible.builtin.import_tasks: tasks/lightspeed_demo_ensure_hostgroup_parameters.yml
+      when: lightspeed_demo_ensure_hostgroup_parameters | default(true) | bool
+
+    - name: Find stale Satellite host record before reprovisioning
+      ansible.builtin.uri:
+        url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts?search=name+%3D+{{ (lightspeed_demo_vm_fqdn | urlencode) }}&per_page=5"
+        url_username: "{{ satellite_username | default('admin') }}"
+        url_password: "{{ satellite_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        return_content: true
+      register: _stale_host_search
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+      failed_when: false
+
+    - name: Get full stale host details for cleanup
+      ansible.builtin.uri:
+        url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts/{{ (_stale_host_search.json.results | default([]) | first).id | default('0') }}"
+        url_username: "{{ satellite_username | default('admin') }}"
+        url_password: "{{ satellite_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        return_content: true
+      register: _stale_host_detail
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+      failed_when: false
+      when: (_stale_host_search.json.results | default([]) | length) > 0
+
+    - name: Set stale host facts for cleanup
+      ansible.builtin.set_fact:
+        _stale_host_id: "{{ (_stale_host_search.json.results | default([]) | first).id | default('') | string }}"
+        _stale_host_medium_id: "{{ _stale_host_detail.json.medium_id | default('') | string }}"
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+
+    # Strip compute_resource_id before DELETE so Satellite does not attempt to remove a VM
+    # that has already been destroyed by the libvirt cleanup task above.
+    - name: Strip compute resource from stale host for clean deletion
+      ansible.builtin.uri:
+        url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts/{{ _stale_host_id }}"
+        url_username: "{{ satellite_username | default('admin') }}"
+        url_password: "{{ satellite_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        method: PUT
+        body_format: json
+        body:
+          host:
+            managed: true
+            medium_id: "{{ _stale_host_medium_id | int if _stale_host_medium_id | length > 0 else omit }}"
+            compute_resource_id: ""
+        return_content: true
+        status_code: [200, 201, 422, 404]
+      register: _stale_host_patch
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+      failed_when: false
+      when: _stale_host_id | string | length > 0
+
+    - name: Delete stale Satellite host record before reprovisioning
+      ansible.builtin.uri:
+        url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts/{{ _stale_host_id }}"
+        url_username: "{{ satellite_username | default('admin') }}"
+        url_password: "{{ satellite_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        method: DELETE
+        return_content: true
+        status_code: [200, 201, 204, 404, 422]
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+      failed_when: false
+      when:
+        - _stale_host_id | string | length > 0
+        - (_stale_host_patch.status | default(0)) in [200, 201]
+
+    - name: Cleanup libvirt VM on hypervisor (controller) before reprovisioning # noqa: risky-shell-pipe
+      ansible.builtin.shell: |
+        set -o pipefail
+        FQDN="{{ lightspeed_demo_vm_fqdn }}"
+        if virsh dominfo "$FQDN" >/dev/null 2>&1; then
+          VM_MAC=$(virsh domiflist "$FQDN" 2>/dev/null | grep -oE '([0-9a-f]{2}:){5}[0-9a-f]{2}' | head -1 || true)
+          echo "LIBVIRT_FOUND mac=${VM_MAC}"
+          virsh destroy "$FQDN" 2>/dev/null || true
+          virsh undefine "$FQDN" --nvram 2>/dev/null || virsh undefine "$FQDN" 2>/dev/null || true
+          echo "LIBVIRT_DELETED"
+        else
+          echo "LIBVIRT_ABSENT"
+        fi
+      args:
+        executable: /bin/bash
+      register: _libvirt_cleanup
+      failed_when: false
+      changed_when: "'LIBVIRT_DELETED' in (_libvirt_cleanup.stdout | default(''))"
+      run_once: true # noqa: run-once[task]
+
+    # Upload the ifcfg snippets that render ZONE= into the NM connection profile.
+    # The main template upload below does NOT upload snippets — if soe-provisioning-snippets.yml
+    # has not been run recently, Foreman may have an old soe_kickstart_ifcfg_generic_interface
+    # without the ZONE= line, leaving the ifcfg without a zone and NM landing in default (drop).
+    - name: Upload soe_uefi_prefer_disk_boot snippet to Satellite (IPv6 PXE deletion + disk-first reorder)
+      redhat.satellite.provisioning_template:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        name: soe_uefi_prefer_disk_boot
+        kind: snippet
+        file_name: "{{ playbook_dir }}/templates/prov_template_snippet_soe_uefi_prefer_disk_boot.j2"
+        organizations:
+          - "{{ satellite_organization }}"
+        locations:
+          - "{{ satellite_location }}"
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+
+    - name: Upload soe_kickstart_networking_setup snippet to Satellite (H2-fix)
+      redhat.satellite.provisioning_template:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        name: soe_kickstart_networking_setup
+        kind: snippet
+        file_name: "{{ playbook_dir }}/templates/prov_template_snippet_soe_kickstart_networking_setup.j2"
+        organizations:
+          - "{{ satellite_organization }}"
+        locations:
+          - "{{ satellite_location }}"
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+
+    - name: Upload soe_kickstart_ifcfg_generic_interface snippet to Satellite (H2-fix — contains ZONE= line)
+      redhat.satellite.provisioning_template:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        name: soe_kickstart_ifcfg_generic_interface
+        kind: snippet
+        file_name: "{{ playbook_dir }}/templates/prov_template_snippet_soe_kickstart_ifcfg_generic_interface.j2"
+        organizations:
+          - "{{ satellite_organization }}"
+        locations:
+          - "{{ satellite_location }}"
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+
+    - name: Upload SOE Kickstart Default provision template to Satellite (ensures H1/firewall nil fixes are active)
+      redhat.satellite.provisioning_template:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        name: SOE Kickstart Default
+        kind: provision
+        file_name: "{{ playbook_dir }}/templates/prov_template_soe_kickstart_default.j2"
+        organizations:
+          - "{{ satellite_organization }}"
+        locations:
+          - "{{ satellite_location }}"
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+
+    - name: Upload SOE Kickstart Default PXEGrub2 template to Satellite
+      redhat.satellite.provisioning_template:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        name: SOE Kickstart Default PXEGrub2
+        kind: PXEGrub2
+        file_name: "{{ playbook_dir }}/templates/prov_template_soe_kickstart_default_pxegrub2.j2"
+        organizations:
+          - "{{ satellite_organization }}"
+        locations:
+          - "{{ satellite_location }}"
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+
+    - name: Look up Foreman subnet and smart proxy IDs
+      ansible.builtin.uri:
+        url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/subnets?search=name={{ foreman_subnet_name | urlencode }}"
+        url_username: "{{ satellite_username | default('admin') }}"
+        url_password: "{{ satellite_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        return_content: true
+      register: _subnet_lookup
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+
+    - name: Look up Satellite smart proxy ID for DHCP
+      vars:
+        _proxy_name: "{{ satellite_smart_proxy_name | default('satellite.laptop.lab') }}"
+      ansible.builtin.uri:
+        url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/smart_proxies?search=name%3D{{ _proxy_name | urlencode }}"
+        url_username: "{{ satellite_username | default('admin') }}"
+        url_password: "{{ satellite_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        return_content: true
+      register: _proxy_lookup
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+
+    - name: Ensure Foreman subnet has correct DHCP proxy, IPAM, and kernel options
+      ansible.builtin.uri:
+        url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/subnets/{{ _subnet_lookup.json.results[0].id }}"
+        method: PUT
+        url_username: "{{ satellite_username | default('admin') }}"
+        url_password: "{{ satellite_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        body_format: json
+        body:
+          subnet:
+            dhcp_id: "{{ _proxy_lookup.json.results[0].id }}"
+            # verify-subnet-httpboot: include httpboot_id so the subnet's HTTPBoot proxy is set/kept.
+            # The SOE PXEGrub2 template checks subnet.httpboot.httpboot_http_port to emit the efi_http
+            # GRUB menuentry; without this the template falls back to entry index 0 (TFTP).
+            httpboot_id: "{{ _proxy_lookup.json.results[0].id }}"
+            tftp_id: "{{ _proxy_lookup.json.results[0].id }}"
+            ipam: "DHCP"
+            kernel_opts: "inst.noverifyssl"
+        status_code: [200, 201]
+      register: _subnet_update_result
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+      when: >-
+        (_subnet_lookup.json.results | default([]) | length) > 0 and
+        (_proxy_lookup.json.results | default([]) | length) > 0
+
     - name: Ensure managed host exists, is in build mode, and libvirt guest is started
       redhat.satellite.host:
         username: "{{ satellite_username | default('admin') }}"
@@ -107,7 +470,107 @@
         root_pass: "{{ root_password }}"
         compute_attributes:
           start: "1"
-      run_once: true
+      run_once: true # noqa: run-once[task]
+
+    # research-vm-attrs-boot: capture domain XML right after Foreman creates the VM so we can
+    # see what boot-related attributes fog-libvirt actually emits (boot order, NIC boot element, etc.)
+    - name: Capture VM domain XML for vm_attrs research (virsh dumpxml)
+      ansible.builtin.command:
+        argv: [virsh, dumpxml, "{{ lightspeed_demo_vm_fqdn }}"]
+      register: _vm_dumpxml
+      failed_when: false
+      changed_when: false
+      run_once: true # noqa: run-once[task]
+      delegate_to: localhost
+
+    - name: Log VM domain XML — confirms fog-libvirt boot_order / NIC boot element support (research-vm-attrs-boot)
+      ansible.builtin.debug:
+        msg: |
+          === virsh dumpxml {{ lightspeed_demo_vm_fqdn }} ===
+          {{ _vm_dumpxml.stdout | default('(VM not found — may still be starting)') }}
+          ===
+          Look for: <boot dev=...> in <os>, <boot order=N> on <interface> or <disk>, or <nvram> path.
+          If only <firmware>efi</firmware> and no boot order: fog-libvirt does not emit NIC boot attrs.
+      run_once: true # noqa: run-once[task]
+
+    - name: Get Foreman host record to obtain the IP assigned by Internal DB IPAM
+      ansible.builtin.uri:
+        url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts/{{ lightspeed_demo_vm_fqdn }}"
+        url_username: "{{ satellite_username | default('admin') }}"
+        url_password: "{{ satellite_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        return_content: true
+      register: _host_for_ip_update
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+      failed_when: false
+
+    - name: Set wait_for host to Foreman-assigned IP (matches IdM DNS registration)
+      ansible.builtin.set_fact:
+        _foreman_host_ip: >-
+          {{
+            (_host_for_ip_update.json.interfaces
+            | default([])
+            | selectattr('primary', 'equalto', true)
+            | list
+            | first
+            | default({})).ip | default('')
+          }}
+      run_once: true # noqa: run-once[task]
+
+    - name: Override wait_for host to Foreman IP (bypasses stale DNS during provisioning)
+      ansible.builtin.set_fact:
+        lightspeed_demo_vm_wait_host: "{{ _foreman_host_ip }}"
+      when: (_foreman_host_ip | default('') | length) > 0
+      run_once: true # noqa: run-once[task]
+
+    - name: Get VM MAC from hypervisor (virsh domiflist)
+      ansible.builtin.command:
+        argv: [virsh, domiflist, "{{ lightspeed_demo_vm_fqdn }}"]
+      register: _virsh_iflist
+      failed_when: false
+      changed_when: false
+      run_once: true # noqa: run-once[task]
+
+    - name: Extract VM MAC address from virsh output
+      ansible.builtin.set_fact:
+        _vm_mac: >-
+          {{ _virsh_iflist.stdout | default('') | regex_search('([0-9a-f]{2}:){5}[0-9a-f]{2}') | default('') }}
+      run_once: true # noqa: run-once[task]
+
+    - name: Look up VM actual IP from hypervisor ARP table (virbr0) # noqa: risky-shell-pipe
+      ansible.builtin.shell: |
+        set -o pipefail
+        ip neigh show dev virbr0 2>/dev/null | awk '/{{ _vm_mac | lower }}/ {print $1; exit}'
+      args:
+        executable: /bin/bash
+      register: _arp_ip
+      failed_when: false
+      changed_when: false
+      run_once: true # noqa: run-once[task]
+      when: _vm_mac | length > 0
+
+    - name: Use ARP-confirmed IP for wait_for if it differs from Foreman assignment
+      ansible.builtin.set_fact:
+        lightspeed_demo_vm_wait_host: "{{ _arp_ip.stdout | trim }}"
+      when:
+        - (_arp_ip.stdout | default('') | trim | length) > 0
+        - (_arp_ip.stdout | trim) != (_foreman_host_ip | default(''))
+      run_once: true # noqa: run-once[task]
+
+    - name: Flush DNS cache on the Ansible controller (so {{ lightspeed_demo_vm_fqdn }} can resolve)
+      when: lightspeed_demo_flush_controller_cache | default(true) | bool
+      ansible.builtin.command: resolvectl flush-caches
+      become: true
+      run_once: true # noqa: run-once[task]
+      register: lightspeed_controller_dns_flush
+      ignore_errors: true
+      changed_when: lightspeed_controller_dns_flush.rc is defined and lightspeed_controller_dns_flush.rc == 0
+
+    - name: Remove stale SSH host keys for reprovisioned guest on the controller
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/lightspeed_demo_clear_controller_known_hosts.yml"
 
     - name: Wait for guest SSH after provisioning (kickstart / first boot)
       when: lightspeed_demo_provision_wait_ssh | default(true) | bool
@@ -118,7 +581,7 @@
         timeout: "{{ lightspeed_demo_provision_ssh_wait_timeout | int }}"
         state: started
       delegate_to: localhost
-      run_once: true
+      run_once: true # noqa: run-once[task]
 
     - name: Provision summary
       ansible.builtin.debug:
@@ -126,7 +589,88 @@
           Satellite is building {{ lightspeed_demo_vm_fqdn }} in host group [{{ lightspeed_demo_hostgroup_title }}].
           When kickstart finishes, add ansible_host if needed and run this playbook with
           --limit {{ lightspeed_demo_vm_fqdn }} (omit --tags lightspeed_demo_provision) to apply demo roles.
-      run_once: true
+      run_once: true # noqa: run-once[task]
+
+- name: Post-provision — prefer disk boot over network/HTTP in UEFI BootOrder
+  hosts: lightspeed_demo_clients
+  gather_facts: true
+  become: true
+  tags:
+    - lightspeed_demo_provision
+    - lightspeed_demo_disk_boot
+  tasks:
+    - name: Copy UEFI prefer-disk script to provisioned guest
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/files/lightspeed_uefi_prefer_disk_boot.sh"
+        dest: /tmp/uefi_prefer_disk_boot.sh
+        mode: "0700"
+
+    - name: Reorder UEFI BootOrder — disk before network/HTTP (no-op on BIOS or if already correct)
+      ansible.builtin.command: /tmp/uefi_prefer_disk_boot.sh
+      register: _uefi_boot_fix
+      changed_when: _uefi_boot_fix.stdout | length > 0
+      failed_when: false
+
+    - name: Show efibootmgr output after BootOrder fix
+      ansible.builtin.debug:
+        msg: >-
+          uefi_prefer_disk_boot rc={{ _uefi_boot_fix.rc }}
+          out={{ _uefi_boot_fix.stdout | default('(no output — already correct or non-UEFI)') }}
+
+    - name: Show current BootOrder after fix (efibootmgr)
+      ansible.builtin.command: efibootmgr
+      register: _efibootmgr_after
+      changed_when: false
+      failed_when: false
+
+    - name: Log BootOrder for verification (verify-efibootmgr-output)
+      ansible.builtin.debug:
+        msg: "{{ _efibootmgr_after.stdout | default('efibootmgr not available or BIOS system') }}"
+
+    - name: Ensure firewalld is enabled and running before zone changes
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: true
+      failed_when: false
+
+    - name: Set firewalld default zone to internal (lab network access)
+      ansible.builtin.command: firewall-cmd --set-default-zone=internal
+      register: _fw_set_zone
+      changed_when: "'success' in (_fw_set_zone.stdout | default(''))"
+      failed_when: false
+
+    # Use nmcli to assign zone on all active non-loopback NM connections.
+    # firewall-cmd --change-interface uses ansible_default_ipv4.interface which may be wrong or
+    # missing on a freshly booted VM. nmcli modifies the connection profile directly so the zone
+    # survives reconnects and reboots without relying on Ansible fact collection.
+    - name: Assign all active NM connections to internal zone via nmcli
+      ansible.builtin.shell: |
+        set -o pipefail
+        changed=0
+        while IFS=: read -r uuid type device; do
+          [ "$type" = "loopback" ] && continue
+          [ -z "$uuid" ] && continue
+          cur_zone=$(nmcli -t -f connection.zone connection show "$uuid" 2>/dev/null \
+            | cut -d: -f2 | tr -d ' ')
+          if [ "$cur_zone" != "internal" ]; then
+            nmcli connection modify "$uuid" connection.zone internal && changed=1
+          fi
+        done < <(nmcli -t -f UUID,TYPE,DEVICE connection show --active 2>/dev/null)
+        if [ "$changed" = "1" ]; then
+          nmcli connection reload
+          firewall-cmd --reload 2>/dev/null || true
+        fi
+        printf 'nmcli_zone_fix changed=%s\n' "$changed"
+      args:
+        executable: /bin/bash
+      register: _fw_nmcli_zone
+      changed_when: "'changed=1' in (_fw_nmcli_zone.stdout | default(''))"
+      failed_when: _fw_nmcli_zone.rc != 0
+
+    - name: Show nmcli zone assignment result
+      ansible.builtin.debug:
+        msg: "{{ _fw_nmcli_zone.stdout | default('no output') }}"
 
 - name: Lightspeed IOP demo — recommendation and vulnerability triggers
   hosts: lightspeed_demo_clients

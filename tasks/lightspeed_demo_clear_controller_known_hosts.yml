@@ -1,0 +1,23 @@
+---
+# Run on the Ansible controller (this play is connection: local, or use delegate_to: localhost).
+# See lightspeed-demo-client.yml header for variables.
+- name: Build list of host names/IPs to remove from known_hosts
+  when: lightspeed_demo_clear_known_hosts | default(true) | bool
+  ansible.builtin.set_fact:
+    _lightspeed_wait_kh: "{{ [lightspeed_demo_vm_wait_host | string | trim] if (lightspeed_demo_vm_wait_host is defined) and (lightspeed_demo_vm_wait_host | string | trim | length > 0) and ((lightspeed_demo_vm_wait_host | string | trim) != (lightspeed_demo_vm_fqdn | string)) else [] }}"
+
+- name: Build combined unique list of known_hosts entries to clear
+  when: lightspeed_demo_clear_known_hosts | default(true) | bool
+  ansible.builtin.set_fact:
+    lightspeed_demo_known_hosts_clear_list: "{{ ([lightspeed_demo_vm_fqdn] + _lightspeed_wait_kh + (lightspeed_demo_extra_known_host_names | default([]))) | unique | list }}"
+
+- name: Remove stale SSH host keys for the reprovisioned demo guest on the Ansible controller
+  when: lightspeed_demo_clear_known_hosts | default(true) | bool
+  ansible.builtin.known_hosts:
+    name: "{{ item }}"
+    state: absent
+    path: "{{ lightspeed_demo_controller_known_hosts_path | default(lookup('env', 'HOME') ~ '/.ssh/known_hosts') }}"
+  loop: "{{ lightspeed_demo_known_hosts_clear_list }}"
+  run_once: true
+  register: lightspeed_known_hosts_result
+  ignore_errors: true

@@ -6,10 +6,17 @@
 #   - Satellite and clients: use idm for resolv/NetworkManager (not the gateway) so *.laptop.lab and
 #     forwarders are consistent. Exception: the IdM VM in Phase 1 (install-idm) uses the gateway
 #     until the IPA service is up — see host_vars/idm.laptop.lab (dns_server).
-vm_network: "default" # Assuming libvirt default network is being used
+# Libvirt host bridge for Foreman NIC (compute profile: type=bridge, not a libvirt network name).
+vm_network: "virbr0"
 subnet_cidr: "24"
 gateway_ip: "192.168.122.1"
 satellite_server_ip: "192.168.122.5"
+# HTTP boot URI served by the Satellite HTTPBoot smart proxy (port 8000).
+# Used by the libvirt_hypervisor_bootmenu_hook role to write /etc/libvirt/hooks/http-boot-uri
+# so the qemu.d/50-bootmenu hook can pre-seed NVRAM BootNext before each provisioning boot.
+libvirt_bootmenu_http_uri: "http://{{ satellite_server_ip }}:8000/httpboot/grub2/grubx64-httpboot.efi"
+satellite_smart_proxy_name: "satellite.laptop.lab"
+satellite_url: "https://satellite.laptop.lab"
 # Must match group_vars/laptop_lab idm_server_ip
 idm_server_ip: "192.168.122.4"
 
@@ -21,8 +28,16 @@ idm_hostname: "idm.laptop.lab"
 dhcp_range: "192.168.122.100 192.168.122.200"
 # Foreman/Satellite Subnet API (roles/foreman_subnet); must match DHCP/IdM in install-satellite.yml
 foreman_subnet_network: "192.168.122.0"
-foreman_subnet_name: "laptop-lab-provisioning"
+foreman_subnet_name: "laptop-lab"
+foreman_subnet_ipam: "DHCP"
+foreman_subnet_dhcp_proxy: "{{satellite_smart_proxy_name}}"
+foreman_subnet_tftp_proxy: "{{satellite_smart_proxy_name}}"
+foreman_subnet_httpboot_proxy: "{{satellite_smart_proxy_name}}"
+foreman_subnet_dns_proxy: "{{satellite_smart_proxy_name}}"
 
+# Optional: one-line public key (same as ~/.ssh/casmith.pub) for Foreman host param lab_bootstrap_authorized_key
+# if you do not want satellite-lightspeed-demo to read the file from the controller.
+# lab_bootstrap_authorized_key: "ssh-ed25519 AAAA... casmith@laptop"
 # Libvirt compute resource (Infrastructure → Compute Resources); hypervisor at default network gateway
 libvirt_compute_resource_name: "laptop-lab-libvirt"
 libvirt_compute_resource_url: "qemu+ssh://libvirt@192.168.122.1/system"

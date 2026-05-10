@@ -1,0 +1,167 @@
+---
+# Upload SOE kickstart-related provisioning snippets AND the main provision template to Satellite/Foreman,
+# then link the provision template to all matching RHEL 9 operating systems.
+#
+# "SOE Kickstart Default" (and associated PXE templates) validate the full snippet chain. If any
+# referenced SOE snippet is missing in Foreman, host create / build fails with 422, e.g.:
+#   The specified snippet 'soe_disable_non_sat_repos' does not exist, or is not a snippet.
+#
+# After changing files under templates/prov_template_snippet_soe_*.j2 OR
+# templates/prov_template_soe_kickstart_default.j2, re-run this playbook and retry provisioning.
+# The main provision template (kind: provision) is uploaded and linked to RHEL 9 OSes by this playbook.
+#
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory soe-provisioning-snippets.yml
+#
+# Variables:
+#   soe_kickstart_os_search — Foreman search used to find RHEL 9 OS entries (default: major = 9 AND family = Redhat)
+#   soe_kickstart_default_provision_template — name to register in Satellite (default: SOE Kickstart Default)
+#
+# Uses the same vault + laptop.lab as other Satellite plays; host_group satellite_group in inventory.
+#
+- name: SOE kickstart helper snippets in Satellite
+  hosts: satellite_group
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "~/vault/satellite.yml"
+    - "~/vault/secrets.yml"
+    - "{{ playbook_dir }}/laptop.lab.yml"
+  vars:
+    soe_kickstart_os_search: 'major = 9 AND family = Redhat'
+    soe_kickstart_default_provision_template: "SOE Kickstart Default"
+    # All prov_template_snippet_soe_*.j2 in this repo; names must match the `name:` header in each file
+    # and what prov_template_soe_kickstart_default.j2 calls via snippet '…'.
+    soe_provisioning_kickstart_snippets:
+      - { name: soe_kickstart_ifcfg_bond_interface, file: prov_template_snippet_soe_kickstart_ifcfg_bond_interface.j2 }
+      - { name: soe_kickstart_ifcfg_bonded_interface, file: prov_template_snippet_soe_kickstart_ifcfg_bonded_interface.j2 }
+      - { name: soe_kickstart_ifcfg_generic_interface, file: prov_template_snippet_soe_kickstart_ifcfg_generic_interface.j2 }
+      - { name: soe_kickstart_networking_setup, file: prov_template_snippet_soe_kickstart_networking_setup.j2 }
+      - { name: soe_create_users_selinux, file: prov_template_snippet_soe_create_users_selinux.j2 }
+      - { name: soe_disable_non_sat_repos, file: prov_template_snippet_soe_disable_non_sat_repos.j2 }
+      - { name: soe_ensure_python, file: prov_template_snippet_soe_ensure_python.j2 }
+      - { name: soe_install_cockpit, file: prov_template_snippet_soe_install_cockpit.j2 }
+      - { name: soe_use_NBDE, file: prov_template_snippet_soe_use_NBDE.j2 }
+      - { name: "SOE Kickstart Default custom packages", file: prov_template_snippet_soe_kickstart_default_custom_packages.j2 }
+      - { name: soe_uefi_prefer_disk_boot, file: prov_template_snippet_soe_uefi_prefer_disk_boot.j2 }
+
+  pre_tasks:
+    - name: Stat optional repo-root CA for Satellite API (./ca.crt)
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/ca.crt"
+      register: soe_snippets_ca_crt_stat
+
+    - name: Default satellite_ca_path to repo ca.crt when file exists
+      ansible.builtin.set_fact:
+        satellite_ca_path: "{{ playbook_dir }}/ca.crt"
+      when:
+        - satellite_ca_path is not defined
+        - soe_snippets_ca_crt_stat.stat.exists
+
+  tasks:
+    - name: Ensure SOE kickstart provisioning snippets are present
+      redhat.satellite.provisioning_template:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        name: "{{ item.name }}"
+        kind: snippet
+        file_name: "{{ playbook_dir }}/templates/{{ item.file }}"
+        organizations:
+          - "{{ satellite_organization }}"
+        locations:
+          - "{{ satellite_location }}"
+      loop: "{{ soe_provisioning_kickstart_snippets }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Ensure SOE Kickstart Default PXEGrub2 template is present
+      redhat.satellite.provisioning_template:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        name: SOE Kickstart Default PXEGrub2
+        kind: PXEGrub2
+        file_name: "{{ playbook_dir }}/templates/prov_template_soe_kickstart_default_pxegrub2.j2"
+        organizations:
+          - "{{ satellite_organization }}"
+        locations:
+          - "{{ satellite_location }}"
+
+    - name: Ensure SOE Kickstart Default main provision template is present
+      redhat.satellite.provisioning_template:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        name: "{{ soe_kickstart_default_provision_template }}"
+        kind: provision
+        file_name: "{{ playbook_dir }}/templates/prov_template_soe_kickstart_default.j2"
+        organizations:
+          - "{{ satellite_organization }}"
+        locations:
+          - "{{ satellite_location }}"
+
+    - name: Find RHEL 9 operating systems to link the provision template
+      redhat.satellite.resource_info:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        resource: operatingsystems
+        search: "{{ soe_kickstart_os_search }}"
+        full_details: true
+      register: soe_rhel9_os_list
+
+    - name: Fail if no RHEL 9 operating systems found
+      ansible.builtin.assert:
+        that: soe_rhel9_os_list.resources | default([]) | length > 0
+        fail_msg: >-
+          No operating systems matched search [{{ soe_kickstart_os_search }}].
+          Override with -e soe_kickstart_os_search='major = 9 AND name = "RedHat 9.5"' or similar.
+
+    - name: Link SOE Kickstart Default provision template to each RHEL 9 OS (merge — preserves existing templates)
+      redhat.satellite.operatingsystem:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        name: "{{ item.name }}"
+        major: "{{ item.major }}"
+        minor: "{{ item.minor }}"
+        os_family: "{{ item.family }}"
+        provisioning_templates: >-
+          {{
+            (item.provisioning_templates | default([]) | map(attribute='name') | list)
+            | union([soe_kickstart_default_provision_template])
+            | unique
+          }}
+      loop: "{{ soe_rhel9_os_list.resources }}"
+      loop_control:
+        label: "{{ item.title }}"
+
+    - name: Set SOE Kickstart Default as the default provision template for each RHEL 9 OS
+      redhat.satellite.os_default_template:
+        username: "{{ satellite_username | default('admin') }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs | default(true) }}"
+        ca_path: "{{ satellite_ca_path | default(omit) }}"
+        state: present
+        operatingsystem: "{{ item.title }}"
+        template_kind: provision
+        provisioning_template: "{{ soe_kickstart_default_provision_template }}"
+      loop: "{{ soe_rhel9_os_list.resources }}"
+      loop_control:
+        label: "{{ item.title }}"

@@ -1,7 +1,24 @@
 ---
-# Libvirt-specific vm_attrs; firmware/UEFI keys follow Foreman’s libvirt form (see also hammer host create --help).
+# Libvirt-specific vm_attrs; firmware/UEFI keys follow Foreman's libvirt form (see also hammer host create --help).
 # Foreman uses fog-libvirt for domain XML; it does not emit <bootmenu enable='yes'/>, and vm_attrs cannot
 # enable it. For Foreman-provisioned guests, install role libvirt_hypervisor_bootmenu_hook on the hypervisor.
+#
+# research-vm-attrs-boot findings: fog-libvirt exposes only cpus, memory, firmware, nics_attributes, and
+# volumes_attributes through Foreman's compute profile API. There is NO boot_order, network_boot_mode, or
+# per-interface <boot order='N'/> knob available. For UEFI (OVMF) guests, boot priority is governed by
+# NVRAM BootOrder — not by the domain XML boot elements. Two delay sources before the installer loads:
+#
+#   1. NVRAM-level: OVMF creates UEFI PXEv4 entries before UEFI HTTPv4 entries on first boot of a new VM.
+#      To move HTTP before PXE at definition time: configure dhcpd with a "HTTPClient" vendor class so OVMF
+#      gets an HTTP boot URI and creates an HTTP NVRAM entry (post-install.yml satellite_httpboot tag handles
+#      this). A pre-populated NVRAM template file (complex, not in this repo) is the alternative.
+#
+#   2. GRUB-level: once GRUB loads (via TFTP/PXE), the SOE PXEGrub2 template sets default='efi_http' when
+#      the subnet HTTPBoot proxy reports an HTTP port. The hostgroup param default_grub_install_entry=efi_http
+#      overrides auto-detection. Loader timeout is 2 s (loader_timeout hostgroup param).
+#
+# Confirm actual NVRAM entry ordering after provisioning: efibootmgr -v (captured automatically in
+# the Post-provision play of lightspeed-demo-client.yml; look for 'UEFI HTTPv4' before 'UEFI PXEv4').
 
 - name: Ensure libvirt compute profile
   redhat.satellite.compute_profile:
@@ -17,11 +34,11 @@
           cpus: "{{ libvirt_compute_profile_cpus | int }}"
           memory: "{{ libvirt_compute_profile_memory_bytes | int }}"
           firmware: uefi
-          # NAT virtual network (laptop.lab.yml vm_network); empty bridge breaks virDomainCreate (MTU on '').
+          # libvirt <interface type='bridge' source bridge='...'>; vm_network is the bridge (e.g. virbr0).
           nics_attributes:
             0:
-              type: network
-              network: "{{ vm_network | default('default') }}"
+              type: bridge
+              bridge: "{{ vm_network | default('virbr0') }}"
               model: virtio
           volumes_attributes:
             0:

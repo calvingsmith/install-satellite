@@ -2,3 +2,10 @@
 # Installed on the libvirt hypervisor (not Satellite). Requires libvirt >= 6.5 (qemu.d hooks).
 libvirt_bootmenu_hook_script_path: /etc/libvirt/hooks/qemu.d/50-bootmenu
 libvirt_bootmenu_hook_libvirtd_service: libvirtd
+# HTTP boot URI for NVRAM BootNext pre-seeding.
+# When set, the role creates /etc/libvirt/hooks/nvram-http-boot-template.qcow2
+# (a copy of OVMF_VARS_4M.qcow2 with BootNext pointing at this URI) and the
+# prepare/begin hook redirects the <nvram template='...'> attribute to it when
+# the NVRAM instance does not yet exist (fresh / re-provisioned VM).
+# Set to empty string to disable NVRAM preseed.
+libvirt_bootmenu_http_uri: ""

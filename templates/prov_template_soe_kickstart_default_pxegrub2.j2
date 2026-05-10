@@ -13,12 +13,16 @@ oses:
 description: |
   Grub2 config for kickstart (TFTP and HTTP boot). Clone of Foreman "Kickstart default PXEGrub2".
 
+  This template only emits GRUB menu entries (linux/initrd). It does not support kickstart %post and cannot
+  inject SSH keys. Root authorized_keys for lab_bootstrap_authorized_key is written in the provision template
+  SOE Kickstart Default — see its %post --nochroot section.
+
   When the subnet has HTTPBoot, the default entry is EFI HTTP (efi_http) if the HTTP port is enabled,
   else EFI HTTPS (efi_https) if only HTTPS is enabled — so the HTTP(S) installer path is chosen after
   the loader timeout instead of the first TFTP-relative entry.
 
   Host parameters (optional):
-  - loader_timeout: seconds before the default entry boots (default 10)
+  - loader_timeout: seconds before the default entry boots (default 2)
   - default_grub_install_entry: menu index (0-based) or GRUB menu id (e.g. efi_http, efi_https).
     If unset, defaults as above when HTTPBoot is available; otherwise 0.
 test_on:
@@ -69,9 +73,9 @@ test_on:
    grub_default_render = "'#{grub_default}'"
  end
  loader_timeout_sec = host_param('loader_timeout')
- loader_timeout_sec = 10 if loader_timeout_sec.nil? || loader_timeout_sec.to_s.empty?
+ loader_timeout_sec = 2 if loader_timeout_sec.nil? || loader_timeout_sec.to_s.empty?
  loader_timeout_sec = loader_timeout_sec.to_i
- loader_timeout_sec = 10 if loader_timeout_sec <= 0
+ loader_timeout_sec = 2 if loader_timeout_sec <= 0
 -%>
 
 set default=<%= grub_default_render %>
@@ -93,7 +97,7 @@ if subnet && subnet.httpboot
 -%>
 <% if proxy_http_port -%>
 menuentry '<%= template_name %> EFI HTTP' --id efi_http {
- <%= linuxcmd %> (http,<%= proxy_host %>:<%= proxy_http_port %>)/httpboot/<%= @kernel %> <%= pxe_kernel_options %> <%= snippet("kickstart_kernel_options").strip %>
+ <%= linuxcmd %> (http,<%= proxy_host %>:<%= proxy_http_port %>)/httpboot/<%= @kernel %> inst.noverifyssl <%= pxe_kernel_options %> <%= snippet("kickstart_kernel_options").strip %>
  <%= initrdcmd %> (http,<%= proxy_host %>:<%= proxy_http_port %>)/httpboot/<%= @initrd %>
 }
 <% else -%>
@@ -102,7 +106,7 @@ menuentry '<%= template_name %> EFI HTTP' --id efi_http {
 
 <% if proxy_https_port -%>
 menuentry '<%= template_name %> EFI HTTPS' --id efi_https {
- <%= linuxcmd %> (https,<%= proxy_host %>:<%= proxy_https_port %>)/httpboot/<%= @kernel %> <%= pxe_kernel_options %> <%= snippet("kickstart_kernel_options").strip %>
+ <%= linuxcmd %> (https,<%= proxy_host %>:<%= proxy_https_port %>)/httpboot/<%= @kernel %> inst.noverifyssl <%= pxe_kernel_options %> <%= snippet("kickstart_kernel_options").strip %>
  <%= initrdcmd %> (https,<%= proxy_host %>:<%= proxy_https_port %>)/httpboot/<%= @initrd %>
 }
 <% else -%>

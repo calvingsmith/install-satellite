@@ -1,0 +1,100 @@
+---
+# Ensure a Foreman installation medium exists for RHEL 9 kickstart provisioning.
+#
+# Satellite serves kickstart trees from Pulp at a URL like:
+#   https://<satellite>/pulp/content/<org_label>/Library/content/dist/rhel9/$version/$arch/baseos/kickstart
+# This URL is NOT automatically registered as a Foreman installation medium when the Katello repo is synced.
+# Without a medium, Foreman rejects host create/update with "medium_id: can't be blank".
+#
+# This task file:
+#   1. Creates the Foreman installation medium (idempotent; state: present).
+#   2. Links the medium to all RedHat 9.x OSes in Foreman.
+#   3. Sets the medium on the rhel9-server parent hostgroup so nested groups inherit it.
+#
+# Variables used (all defaulted):
+#   satellite_url, satellite_username, satellite_password, satellite_validate_certs, satellite_ca_path
+#   satellite_organization, satellite_location
+#   rhel9_hostgroup_name (default: rhel9-server)
+#   lightspeed_demo_rhel9_medium_name (default: computed from satellite_url + org label)
+
+- name: Compute RHEL 9 kickstart medium name and path
+  ansible.builtin.set_fact:
+    _rhel9_medium_name: >-
+      {{ lightspeed_demo_rhel9_medium_name | default(
+           'Red Hat Enterprise Linux 9 for x86_64 kickstart ('
+           ~ (satellite_organization | default('Default Organization') | replace(' ', '_'))
+           ~ ')'
+         ) }}
+    _rhel9_medium_path: >-
+      {{ (satellite_url | regex_replace('/$', '')) }}/pulp/content/{{
+        satellite_organization | default('Default Organization') | replace(' ', '_')
+      }}/Library/content/dist/rhel9/$version/$arch/baseos/kickstart
+  run_once: true
+
+- name: Ensure RHEL 9 kickstart installation medium exists in Foreman
+  redhat.satellite.installation_medium:
+    username: "{{ satellite_username | default('admin') }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ satellite_url }}"
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    state: present
+    name: "{{ _rhel9_medium_name }}"
+    path: "{{ _rhel9_medium_path }}"
+    os_family: Redhat
+    organizations:
+      - "{{ satellite_organization | default('Default Organization') }}"
+    locations:
+      - "{{ satellite_location | default(omit) }}"
+  register: _rhel9_medium_result
+  run_once: true
+
+- name: Find all RedHat 9 operating systems to link the medium
+  redhat.satellite.resource_info:
+    username: "{{ satellite_username | default('admin') }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ satellite_url }}"
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    resource: operatingsystems
+    search: 'name ~ "RedHat" and major = "9"'
+  register: _rhel9_os_list
+  run_once: true
+
+- name: Link RHEL 9 kickstart medium to each RedHat 9 OS (preserve existing media)
+  redhat.satellite.operatingsystem:
+    username: "{{ satellite_username | default('admin') }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ satellite_url }}"
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    state: present
+    name: "{{ item.name }}"
+    major: "{{ item.major }}"
+    minor: "{{ item.minor | default(omit) }}"
+    os_family: "{{ item.family }}"
+    media: >-
+      {{
+        (item.media | default([]) | map(attribute='name') | list)
+        | union([_rhel9_medium_name])
+        | unique
+      }}
+  loop: "{{ _rhel9_os_list.resources | default([]) }}"
+  loop_control:
+    label: "{{ item.title | default(item.name) }}"
+  run_once: true
+  ignore_errors: true
+
+- name: Set RHEL 9 kickstart medium and content source on rhel9-server hostgroup
+  redhat.satellite.hostgroup:
+    username: "{{ satellite_username | default('admin') }}"
+    password: "{{ satellite_password }}"
+    server_url: "{{ satellite_url }}"
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    state: present
+    organization: "{{ satellite_organization | default('Default Organization') }}"
+    name: "{{ rhel9_hostgroup_name | default('rhel9-server') }}"
+    medium: "{{ _rhel9_medium_name }}"
+    content_source: "{{ satellite_smart_proxy_name | default('satellite.laptop.lab') }}"
+  run_once: true

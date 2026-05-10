@@ -178,6 +178,13 @@
         - tags_satellite_pre
         - tags_pre_sync
 
+    - name: Discover Satellite NIC on provisioning network
+      ansible.builtin.shell: |
+        ip -br addr show | awk '/{{ satellite_server_ip | regex_escape() }}\// {print $1; exit}'
+      register: _sat_dhcp_iface
+      changed_when: false
+      failed_when: _sat_dhcp_iface.stdout | trim | length == 0
+
     - name: Run satellite-installer
       ansible.builtin.command:
         argv:
@@ -209,9 +216,11 @@
           - --foreman-proxy-dhcp
           - 'true'
           - --foreman-proxy-dhcp-provider
-          - 'isc'
+          - isc
           - --foreman-proxy-dhcp-managed
           - 'true'
+          - --foreman-proxy-dhcp-interface
+          - "{{ _sat_dhcp_iface.stdout | trim }}"
           - --foreman-proxy-dhcp-range
           - "{{ dhcp_range }}"
           - --foreman-proxy-dhcp-gateway

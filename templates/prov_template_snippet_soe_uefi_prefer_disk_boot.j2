@@ -1,0 +1,90 @@
+<%#
+name: soe_uefi_prefer_disk_boot
+model: ProvisioningTemplate
+kind: snippet
+description: |
+  Two-phase UEFI BootOrder cleanup run in %post --nochroot (where efibootmgr can reach real NVRAM):
+  1. DELETE all IPv6 PXE boot entries — OVMF's DHCPv6 probing takes ~60 s when there is no
+     DHCPv6 server; removing these entries eliminates that wait on every subsequent boot/re-provision.
+  2. REORDER remaining BootOrder to prefer a local (disk) OS over network/HTTP/PXE entries so the
+     installed system boots from disk instead of looping back into HTTP/PXE provisioning.
+  Mirrors files/lightspeed_uefi_prefer_disk_boot.sh in this repository.
+-%>
+# SOE: delete IPv6 PXE entries, then prefer disk/UEFI-OS in BootOrder; do not fail %post on efibootmgr
+set -uo pipefail
+command -v efibootmgr >/dev/null 2>&1 || exit 0
+[[ -d /sys/firmware/efi ]] || exit 0
+
+list=$(efibootmgr 2>/dev/null) || exit 0
+
+# Build title map for all boot entries
+declare -A title
+while IFS= read -r line; do
+  if [[ $line =~ ^Boot([0-9A-Fa-f]+)\*?[[:space:]]+(.+)$ ]]; then
+    title["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+  fi
+done < <(printf '%s\n' "$list" | grep -E '^Boot[0-9A-Fa-f]+')
+
+is_network() {
+  local t=${1,,}
+  [[ $t =~ (pxe|ipxe) ]] && return 0
+  [[ $t =~ tftp ]] && return 0
+  [[ $t =~ http ]] && return 0
+  [[ $t =~ uefi:ipv(4|6) ]] && return 0
+  return 1
+}
+
+# Phase 1: delete all IPv6 PXE entries to eliminate the ~60 s DHCPv6 timeout on next boot
+_ipv6_deleted=0
+for id in "${!title[@]}"; do
+  t="${title[$id]}"
+  tl="${t,,}"
+  if [[ $tl =~ ipv6 ]] && is_network "$tl"; then
+    efibootmgr -b "$id" -B 2>/dev/null && _ipv6_deleted=1 || true
+  fi
+done
+
+# Re-read after deletions so the BootOrder reflects actual remaining entries
+if [[ $_ipv6_deleted -eq 1 ]]; then
+  list=$(efibootmgr 2>/dev/null) || exit 0
+  unset title; declare -A title
+  while IFS= read -r line; do
+    if [[ $line =~ ^Boot([0-9A-Fa-f]+)\*?[[:space:]]+(.+)$ ]]; then
+      title["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+    fi
+  done < <(printf '%s\n' "$list" | grep -E '^Boot[0-9A-Fa-f]+')
+fi
+
+# Phase 2: reorder remaining entries — disk/OS entries first, network entries after
+bline=$(printf '%s\n' "$list" | grep -E '^BootOrder:' || true)
+[[ -n "$bline" ]] || exit 0
+order_str=${bline#BootOrder:}
+order_str=${order_str//[[:space:]]/}
+[[ -n "$order_str" ]] || exit 0
+IFS=',' read -r -a cur <<< "$order_str"
+
+is_preferred_os_disk() {
+  local t=${1,,}
+  is_network "$t" && return 1
+  [[ $t =~ (red[[:space:]]hat|shim|uefi[[:space:]]os) ]] && return 0
+  [[ $t =~ (fedora|rocky|debian) ]] && return 0
+  [[ $t =~ (qemu[[:space:]]hard|q35|hd\() ]] && return 0
+  return 1
+}
+
+new=()
+for id in "${cur[@]}"; do
+  t="${title[$id]-}"
+  [[ -n $t ]] || continue
+  if is_preferred_os_disk "$t"; then
+    new+=("$id")
+  fi
+done
+for id in "${cur[@]}"; do
+  for x in "${new[@]}"; do [[ $x == "$id" ]] && continue 2; done
+  new+=("$id")
+done
+
+new_str=$(IFS=,; echo "${new[*]}")
+[[ "$order_str" == "$new_str" ]] && exit 0
+efibootmgr -o "$new_str" || true

@@ -1,6 +1,7 @@
 ---
-# Foreman Subnet must match the network Satellite DHCP serves and the IdM/forward DNS
-# design (satellite-installer --foreman-proxy-dhcp-* and DNS integration).
+# Foreman Subnet must match the network used for provisioning and the IdM/forward DNS
+# design. Set foreman_subnet_dhcp_proxy to satellite_smart_proxy_name only when ISC
+# DHCP (dhcpd) is installed and managed by foreman-proxy. Defaults to "" (no DHCP proxy).
 
 - name: Require DHCP range string for Foreman pool (two space-separated IPs)
   ansible.builtin.assert:
@@ -34,10 +35,37 @@
     locations:
       - "{{ satellite_location }}"
     boot_mode: DHCP
-    ipam: DHCP
+    ipam: "{{ foreman_subnet_ipam | default('DHCP') }}"
     from_ip: "{{ foreman_subnet_from_ip }}"
     to_ip: "{{ foreman_subnet_to_ip }}"
-    dhcp_proxy: "{{ satellite_smart_proxy_name }}"
+    dhcp_proxy: "{{ foreman_subnet_dhcp_proxy | default(satellite_smart_proxy_name) }}"
     tftp_proxy: "{{ satellite_smart_proxy_name }}"
     httpboot_proxy: "{{ satellite_smart_proxy_name }}"
     dns_proxy: "{{ satellite_smart_proxy_name }}"
+
+- name: Look up subnet to apply kernel_opts (not exposed by satellite.subnet module)
+  ansible.builtin.uri:
+    url: "{{ satellite_url }}/api/v2/subnets?search=name={{ foreman_subnet_name | urlencode }}"
+    url_username: "{{ satellite_username }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs }}"
+    return_content: true
+  register: _subnet_role_lookup
+  delegate_to: localhost
+
+- name: Set kernel_opts on Foreman subnet via API
+  ansible.builtin.uri:
+    url: "{{ satellite_url }}/api/v2/subnets/{{ _subnet_role_lookup.json.results[0].id }}"
+    method: PUT
+    url_username: "{{ satellite_username }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs }}"
+    body_format: json
+    body:
+      subnet:
+        kernel_opts: "{{ foreman_subnet_kernel_opts | default('inst.noverifyssl') }}"
+    status_code: [200, 201]
+  when: (_subnet_role_lookup.json.results | default([]) | length) > 0
+  delegate_to: localhost

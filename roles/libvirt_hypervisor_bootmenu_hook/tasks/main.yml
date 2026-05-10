@@ -1,7 +1,12 @@
 ---
-# Installs /etc/libvirt/hooks/qemu.d/50-bootmenu (libvirt >= 6.5).
-# Foreman/Satellite libvirt uses fog-libvirt, which does not emit <bootmenu> in
-# generated domain XML; this hypervisor-side filter applies it for every new boot.
+# Installs /etc/libvirt/hooks/qemu (dispatcher) + /etc/libvirt/hooks/qemu.d/50-bootmenu.
+# Libvirt only calls /etc/libvirt/hooks/qemu directly; the dispatcher fans out to qemu.d/*.
+#
+# The hook injects <bootmenu enable='yes'/> at prepare/begin and pre-seeds NVRAM
+# BootNext to the Satellite HTTP boot URI at start/begin, eliminating the ~60 s
+# DHCPv6 timeout on provisioning boots.  The URI is stored in:
+#   /etc/libvirt/hooks/http-boot-uri
+# and written by the libvirt_bootmenu_http_uri variable (required).
 
 - name: Ensure libvirt hooks qemu.d directory exists
   ansible.builtin.file:
@@ -11,7 +16,25 @@
     group: root
     mode: "0755"
 
-- name: Install qemu.d bootmenu hook (XML filter)
+- name: Write Satellite HTTP boot URI for NVRAM preseed hook
+  ansible.builtin.copy:
+    content: "{{ libvirt_bootmenu_http_uri }}\n"
+    dest: /etc/libvirt/hooks/http-boot-uri
+    owner: root
+    group: root
+    mode: "0644"
+  when: libvirt_bootmenu_http_uri | default('') | length > 0
+
+- name: Install qemu hook dispatcher (/etc/libvirt/hooks/qemu)
+  ansible.builtin.copy:
+    src: qemu_hook_dispatcher.sh
+    dest: /etc/libvirt/hooks/qemu
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart libvirtd for hook scripts
+
+- name: Install qemu.d bootmenu hook (XML filter + NVRAM preseed)
   ansible.builtin.copy:
     src: libvirt_bootmenu_filter.py
     dest: "{{ libvirt_bootmenu_hook_script_path }}"

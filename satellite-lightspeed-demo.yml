@@ -40,6 +40,11 @@
 #
 # Override nested group name or parent:
 #   -e lightspeed_demo_hostgroup_parent=rhel9-server -e lightspeed_demo_hostgroup_name=lightspeed-demo
+#
+# The nested host group sets SOE host params: lab_permit_root_password_ssh (root+password for Ansible) and
+# lab_bootstrap_authorized_key (one line from the controller’s ~/.ssh/casmith.pub when the file exists and
+# the variable is not set in laptop.lab). Re-publish the SOE template and rebuild the VM so kickstart
+# seeds /root/.ssh/authorized_keys; then lightspeed-demo-client can use ~/.ssh/casmith for the first SSH.
 
 - name: Enable Red Hat Lightspeed in Satellite (IOP — advisor + vulnerability preview)
   hosts: satellite_group
@@ -283,6 +288,38 @@
           Run post-install (rhel9_provisioning host group) or fix lightspeed_demo_hostgroup_parent.
       run_once: true
 
+    - name: Optionally set lab_bootstrap_authorized_key from controller ~/.ssh/casmith.pub
+      when: lab_bootstrap_authorized_key is not defined
+      block:
+        - name: Stat ~/.ssh/casmith.pub on the Ansible controller
+          ansible.builtin.stat:
+            path: "{{ (lookup('env', 'HOME') | default('/root', true)) ~ '/.ssh/casmith.pub' }}"
+          register: lightspeed_casmith_pub_on_controller
+        - name: Load one-line public key for Foreman host group parameter
+          when: lightspeed_casmith_pub_on_controller.stat.exists
+          ansible.builtin.set_fact:
+            lab_bootstrap_authorized_key: "{{ lookup('file', (lookup('env', 'HOME') | default('/root', true)) ~ '/.ssh/casmith.pub') | trim }}"
+      run_once: true
+
+    - name: Build Foreman parameters list for SOE (password SSH + optional bootstrap key)
+      ansible.builtin.set_fact:
+        # network_zone=internal: kickstart sets NIC to firewalld "internal" zone (SSH allowed).
+        # Without this, network_zone is nil; the ERB nil != '' bug caused --set-default-zone=drop to
+        # run without a valid --zone= assignment, blocking SSH permanently (confirmed H1).
+        _lightspeed_demo_hg_params: >-
+          {{
+            [
+              {'name': 'lab_permit_root_password_ssh', 'parameter_type': 'boolean', 'value': true},
+              {'name': 'network_zone', 'parameter_type': 'string', 'value': 'internal'}
+            ]
+            + (
+              [{'name': 'lab_bootstrap_authorized_key', 'parameter_type': 'string', 'value': (lab_bootstrap_authorized_key | string)}]
+              if (lab_bootstrap_authorized_key is defined and ((lab_bootstrap_authorized_key | string) | length > 0))
+              else []
+            )
+          }}
+      run_once: true
+
     - name: Ensure nested host group exists with Lightspeed demo Ansible roles
       redhat.satellite.hostgroup:
         username: "{{ satellite_username | default('admin') }}"
@@ -299,4 +336,7 @@
         description: >-
           Lab clone of {{ lightspeed_demo_hostgroup_parent }} for Lightspeed IOP recommendation + vulnerability demos.
         ansible_roles: "{{ lightspeed_demo_hostgroup_ansible_roles }}"
+        # SOE kickstart %post: sshd (lab_permit_root_password_ssh) + root authorized_keys
+        # (lab_bootstrap_authorized_key) — see prov_template_soe_kickstart_default.j2 %post --nochroot.
+        parameters: "{{ _lightspeed_demo_hg_params }}"
       run_once: true

@@ -1,3 +1,6 @@
+- 
+
+
 - IPA server 192.168.122.4 - needs to resolve everything
 
 # Hypervisor / workstation: *.laptop.lab (NXDOMAIN from 192.168.1.1 is expected)
@@ -14,3 +17,6 @@
 debian enablement
 - satellite-maintain packages install python3.12-pulp-deb
 - satellite-installer --katello-enable-deb=true
+
+httpboot enablement
+- Set up libvirt hook to skip all the pxe stuff

@@ -11,6 +11,10 @@ satellite.laptop.lab
 [lightspeed_demo_clients]
 test-ls.laptop.lab
 
+# kickstart root user — casmith pub key is seeded via lab_bootstrap_authorized_key
+[lightspeed_demo_clients:vars]
+ansible_user=root
+
 [clients]
 test61.laptop.lab
 test-ls.laptop.lab
