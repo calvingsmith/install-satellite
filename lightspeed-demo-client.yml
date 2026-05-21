@@ -303,6 +303,14 @@
       changed_when: "'LIBVIRT_DELETED' in (_libvirt_cleanup.stdout | default(''))"
       run_once: true # noqa: run-once[task]
 
+    - name: Remove HTTP-boot disable flag before reprovisioning (ensures hook preseeds HTTP BootNext)
+      ansible.builtin.file:
+        path: "/etc/libvirt/hooks/no-httpboot-{{ lightspeed_demo_vm_fqdn }}"
+        state: absent
+      become: true
+      delegate_to: localhost
+      run_once: true # noqa: run-once[task]
+
     # Upload the ifcfg snippets that render ZONE= into the NM connection profile.
     # The main template upload below does NOT upload snippets — if soe-provisioning-snippets.yml
     # has not been run recently, Foreman may have an old soe_kickstart_ifcfg_generic_interface
@@ -471,27 +479,7 @@
         compute_attributes:
           start: "1"
       run_once: true # noqa: run-once[task]
-
-    # research-vm-attrs-boot: capture domain XML right after Foreman creates the VM so we can
-    # see what boot-related attributes fog-libvirt actually emits (boot order, NIC boot element, etc.)
-    - name: Capture VM domain XML for vm_attrs research (virsh dumpxml)
-      ansible.builtin.command:
-        argv: [virsh, dumpxml, "{{ lightspeed_demo_vm_fqdn }}"]
-      register: _vm_dumpxml
-      failed_when: false
-      changed_when: false
-      run_once: true # noqa: run-once[task]
-      delegate_to: localhost
-
-    - name: Log VM domain XML — confirms fog-libvirt boot_order / NIC boot element support (research-vm-attrs-boot)
-      ansible.builtin.debug:
-        msg: |
-          === virsh dumpxml {{ lightspeed_demo_vm_fqdn }} ===
-          {{ _vm_dumpxml.stdout | default('(VM not found — may still be starting)') }}
-          ===
-          Look for: <boot dev=...> in <os>, <boot order=N> on <interface> or <disk>, or <nvram> path.
-          If only <firmware>efi</firmware> and no boot order: fog-libvirt does not emit NIC boot attrs.
-      run_once: true # noqa: run-once[task]
+      register: _satellite_host_result
 
     - name: Get Foreman host record to obtain the IP assigned by Internal DB IPAM
       ansible.builtin.uri:
@@ -598,6 +586,8 @@
   tags:
     - lightspeed_demo_provision
     - lightspeed_demo_disk_boot
+  vars:
+    lightspeed_demo_vm_fqdn: test-ls.laptop.lab
   tasks:
     - name: Copy UEFI prefer-disk script to provisioned guest
       ansible.builtin.copy:
@@ -626,6 +616,14 @@
     - name: Log BootOrder for verification (verify-efibootmgr-output)
       ansible.builtin.debug:
         msg: "{{ _efibootmgr_after.stdout | default('efibootmgr not available or BIOS system') }}"
+
+    - name: Mark VM as provisioned — disable HTTP BootNext for all future boots
+      ansible.builtin.file:
+        path: "/etc/libvirt/hooks/no-httpboot-{{ lightspeed_demo_vm_fqdn }}"
+        state: touch
+        mode: "0644"
+      become: true
+      delegate_to: localhost
 
     - name: Ensure firewalld is enabled and running before zone changes
       ansible.builtin.service:

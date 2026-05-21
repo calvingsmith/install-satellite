@@ -39,7 +39,7 @@ _ipv6_deleted=0
 for id in "${!title[@]}"; do
   t="${title[$id]}"
   tl="${t,,}"
-  if [[ $tl =~ ipv6 ]] && is_network "$tl"; then
+  if [[ $tl =~ ipv6|pxev6|httpv6 ]] && is_network "$tl"; then
     efibootmgr -b "$id" -B 2>/dev/null && _ipv6_deleted=1 || true
   fi
 done

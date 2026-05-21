@@ -58,6 +58,14 @@
         location: "{{ satellite_location }}"
       run_once: true
 
+    - name: Remove HTTP-boot disable flag so next provisioning boots via HTTP
+      ansible.builtin.file:
+        path: "/etc/libvirt/hooks/no-httpboot-{{ lightspeed_demo_vm_fqdn }}"
+        state: absent
+      become: true
+      delegate_to: localhost
+      run_once: true
+
     - name: Deletion summary
       ansible.builtin.debug:
         msg: >-

@@ -27,6 +27,13 @@ import xml.etree.ElementTree as ET
 from typing import Optional
 
 _HTTP_BOOT_URI_FILE = "/etc/libvirt/hooks/http-boot-uri"
+# When this file exists for a domain, HTTP BootNext preseeding is skipped.
+# Created by Ansible after provisioning; removed on VM teardown.
+_NO_HTTPBOOT_FLAG_DIR = "/etc/libvirt/hooks"
+
+
+def _no_httpboot_flag(domain_name: str) -> str:
+    return os.path.join(_NO_HTTPBOOT_FLAG_DIR, f"no-httpboot-{domain_name}")
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +137,11 @@ def _handle_start_begin(domain_name: str, xml_data: str) -> None:
     """Preseed NVRAM at start/begin — NVRAM exists, QEMU not yet started."""
     http_uri = _get_http_boot_uri()
     if not http_uri:
+        return
+
+    # Flag-file gate: if Ansible created no-httpboot-<domain> after provisioning, skip preseeding.
+    flag = _no_httpboot_flag(domain_name)
+    if os.path.exists(flag):
         return
 
     nvram_path = _get_nvram_path(xml_data) if xml_data.strip() else None

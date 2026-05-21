@@ -28,6 +28,13 @@
     product: "{{ repository_set.product | default(omit) }}"
     repositories: "{{ repository_set.repository_list }}"
     state: "{{ repository_set.state | default(omit) }}"
+  register: _repo_set_result
+  # CDN connectivity is required for available_repositories scans; treat CDN
+  # errors as non-fatal so offline lab runs continue with already-enabled repos.
+  failed_when: >-
+    _repo_set_result is failed and
+    'CdnSubstitutionError' not in (_repo_set_result.msg | default('')) and
+    'establish a connection' not in (_repo_set_result.msg | default(''))
   when: repository_set.repository_list is defined
 
 - name: "Ensure the state of the repository set - {{ repository_set.name }}"
@@ -41,4 +48,9 @@
     product: "{{ repository_set.product | default(omit) }}"
     all_repositories: true
     state: "{{ repository_set.state | default(omit) }}"
+  register: _repo_set_all_result
+  failed_when: >-
+    _repo_set_all_result is failed and
+    'CdnSubstitutionError' not in (_repo_set_all_result.msg | default('')) and
+    'establish a connection' not in (_repo_set_all_result.msg | default(''))
   when: repository_set.repository_list is not defined
