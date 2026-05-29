@@ -1,0 +1,71 @@
+---
+# Determine the best IP address to use for the SSH wait_for check.
+# Priority: ARP-confirmed IP from virbr0 > Foreman primary interface IP > FQDN.
+# This handles the common case where IdM DNS propagation lags behind the DHCP lease.
+
+- name: Get Foreman host record to obtain the IP assigned by Internal DB IPAM
+  ansible.builtin.uri:
+    url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts/{{ lightspeed_demo_vm_fqdn }}"
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    return_content: true
+  register: _host_for_ip_update
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+  failed_when: false
+
+- name: Set wait_for host to Foreman-assigned IP (matches IdM DNS registration)
+  ansible.builtin.set_fact:
+    _foreman_host_ip: >-
+      {{
+        (_host_for_ip_update.json.interfaces
+        | default([])
+        | selectattr('primary', 'equalto', true)
+        | list
+        | first
+        | default({})).ip | default('')
+      }}
+  run_once: true # noqa: run-once[task]
+
+- name: Override wait_for host to Foreman IP (bypasses stale DNS during provisioning)
+  ansible.builtin.set_fact:
+    lightspeed_demo_vm_wait_host: "{{ _foreman_host_ip }}"
+  when: (_foreman_host_ip | default('') | length) > 0
+  run_once: true # noqa: run-once[task]
+
+- name: Get VM MAC from hypervisor (virsh domiflist)
+  ansible.builtin.command:
+    argv: [virsh, domiflist, "{{ lightspeed_demo_vm_fqdn }}"]
+  register: _virsh_iflist
+  failed_when: false
+  changed_when: false
+  run_once: true # noqa: run-once[task]
+
+- name: Extract VM MAC address from virsh output
+  ansible.builtin.set_fact:
+    _vm_mac: >-
+      {{ _virsh_iflist.stdout | default('') | regex_search('([0-9a-f]{2}:){5}[0-9a-f]{2}') | default('') }}
+  run_once: true # noqa: run-once[task]
+
+- name: Look up VM actual IP from hypervisor ARP table (virbr0) # noqa: risky-shell-pipe
+  ansible.builtin.shell: |
+    set -o pipefail
+    ip neigh show dev virbr0 2>/dev/null | awk '/{{ _vm_mac | lower }}/ {print $1; exit}'
+  args:
+    executable: /bin/bash
+  register: _arp_ip
+  failed_when: false
+  changed_when: false
+  run_once: true # noqa: run-once[task]
+  when: _vm_mac | length > 0
+
+- name: Use ARP-confirmed IP for wait_for if it differs from Foreman assignment
+  ansible.builtin.set_fact:
+    lightspeed_demo_vm_wait_host: "{{ _arp_ip.stdout | trim }}"
+  when:
+    - (_arp_ip.stdout | default('') | trim | length) > 0
+    - (_arp_ip.stdout | trim) != (_foreman_host_ip | default(''))
+  run_once: true # noqa: run-once[task]

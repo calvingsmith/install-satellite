@@ -9,7 +9,19 @@
 # risky-shell-pipe: both remaining shell tasks have `set -o pipefail` as their
 # first command; the Cursor-bundled ansible-lint version does not detect it
 # inside YAML literal block scalars.
+#
+# var-naming[no-role-prefix]: role variables intentionally use the shared
+# `lightspeed_demo_` prefix rather than `lightspeed_demo_provision_` so they
+# can be used unchanged in surrounding playbooks (vars: blocks, -e overrides)
+# without a role-qualified name. Register variables prefixed with `_` are
+# internal task registers, not role-exported vars, and don't warrant the role
+# prefix either.
 skip_list:
   - run-once[task]
   - yaml[line-length]
   - risky-shell-pipe
+  - var-naming[no-role-prefix]
+  # args[module]: redhat.satellite.* tasks pick up server_url / username / password / validate_certs
+  # from the play-level module_defaults group; ansible-lint cannot see that context when linting
+  # role task files in isolation, so it incorrectly reports missing required arguments.
+  - args[module]

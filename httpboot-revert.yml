@@ -6,8 +6,8 @@
 #
 # Uses the same vault files, host, and OS search variables as httpboot-demo.yml:
 #   ansible-playbook -i inventory httpboot-revert.yml
-#   -e httpboot_demo_rhel9_minor=6
-#   -e 'httpboot_demo_os_search=name = "RedHat" and major = 9 and minor = "6"'
+#   -e satellite_soe_templates_rhel9_minor=6
+#   -e 'satellite_soe_templates_os_search=name = "RedHat" and major = 9 and minor = "6"'
 #
 # If your environment used a different default PXEGrub2 before the demo, set:
 #   -e httpboot_revert_default_pxegrub2='Your Previous Template Name'
@@ -28,52 +28,49 @@
     httpboot_revert_default_pxegrub2: Kickstart default PXEGrub2
     httpboot_revert_delete_template: true
 
-  pre_tasks:
-    - name: Stat optional repo-root CA for Satellite API (./ca.crt)
-      ansible.builtin.stat:
-        path: "{{ playbook_dir }}/ca.crt"
-      register: httpboot_revert_ca_crt_stat
+  module_defaults:
+    group/redhat.satellite.satellite:
+      username: "{{ satellite_username | default('admin') }}"
+      password: "{{ satellite_password }}"
+      server_url: "{{ satellite_url }}"
+      validate_certs: "{{ satellite_validate_certs | default(true) }}"
+      ca_path: "{{ satellite_ca_path | default(omit) }}"
 
-    - name: Default satellite_ca_path to repo ca.crt when file exists
-      ansible.builtin.set_fact:
-        satellite_ca_path: "{{ playbook_dir }}/ca.crt"
-      when: 
-        - satellite_ca_path is not defined
-        - httpboot_revert_ca_crt_stat.stat.exists
+  pre_tasks:
+    - name: Detect CA certificate for Satellite API
+      ansible.builtin.import_role:
+        name: satellite_soe_templates
+        tasks_from: detect_ca
 
   tasks:
     - name: Resolve Foreman search string for RHEL 9 OS (same logic as httpboot-demo.yml)
       ansible.builtin.set_fact:
-        httpboot_demo_os_search_effective: >-
+        _httpboot_revert_os_search: >-
           {{
-            httpboot_demo_os_search
-            if httpboot_demo_os_search is defined
+            satellite_soe_templates_os_search
+            if satellite_soe_templates_os_search is defined
             else (
               'name = "RedHat" and major = 9 and minor = "'
-              ~ (httpboot_demo_rhel9_minor | default('7') | string)
+              ~ (satellite_soe_templates_rhel9_minor | default('7') | string)
               ~ '"'
             )
           }}
 
     - name: Look up RHEL 9 operating system (full API record)
       redhat.satellite.resource_info:
-        username: "{{ satellite_username | default('admin') }}"
-        password: "{{ satellite_password }}"
-        server_url: "{{ satellite_url }}"
-        validate_certs: "{{ satellite_validate_certs | default(true) }}"
-        ca_path: "{{ satellite_ca_path | default(omit) }}"
         resource: operatingsystems
-        search: "{{ httpboot_demo_os_search_effective }}"
+        search: "{{ _httpboot_revert_os_search }}"
         full_details: true
       register: httpboot_rhel9_os
+      delegate_to: localhost
 
-    - name: Require exactly one operating system for httpboot_demo_os_search_effective
+    - name: Require exactly one operating system for the search
       ansible.builtin.assert:
         that:
           - httpboot_rhel9_os.resources | length == 1
         fail_msg: >-
-          Expected one OS for search [{{ httpboot_demo_os_search_effective }}], got {{ httpboot_rhel9_os.resources | length }}.
-          Use the same -e httpboot_demo_rhel9_minor=... or -e httpboot_demo_os_search=... as for httpboot-demo.yml.
+          Expected one OS for search [{{ _httpboot_revert_os_search }}], got {{ httpboot_rhel9_os.resources | length }}.
+          Use the same -e satellite_soe_templates_rhel9_minor=... or -e satellite_soe_templates_os_search=... as for httpboot-demo.yml.
 
     - name: Cache OS entity and current provisioning template names
       ansible.builtin.set_fact:
@@ -103,40 +100,28 @@
 
     - name: Set default PXEGrub2 for RHEL 9 back to stock (before dropping SOE association)
       redhat.satellite.os_default_template:
-        username: "{{ satellite_username | default('admin') }}"
-        password: "{{ satellite_password }}"
-        server_url: "{{ satellite_url }}"
-        validate_certs: "{{ satellite_validate_certs | default(true) }}"
-        ca_path: "{{ satellite_ca_path | default(omit) }}"
         state: present
         operatingsystem: "{{ httpboot_revert_os_entity.title }}"
         template_kind: PXEGrub2
         provisioning_template: "{{ httpboot_revert_default_pxegrub2 }}"
+      delegate_to: localhost
 
     - name: Associate restored provisioning templates with the RHEL 9 operating system (without SOE)
       redhat.satellite.operatingsystem:
-        username: "{{ satellite_username | default('admin') }}"
-        password: "{{ satellite_password }}"
-        server_url: "{{ satellite_url }}"
-        validate_certs: "{{ satellite_validate_certs | default(true) }}"
-        ca_path: "{{ satellite_ca_path | default(omit) }}"
         state: present
         name: "{{ httpboot_revert_os_entity.name }}"
         major: "{{ httpboot_revert_os_entity.major }}"
         minor: "{{ httpboot_revert_os_entity.minor }}"
         os_family: "{{ httpboot_revert_os_entity.family }}"
         provisioning_templates: "{{ httpboot_revert_restored_template_names }}"
+      delegate_to: localhost
 
     - name: Remove SOE Kickstart Default PXEGrub2 provisioning template from Satellite
       when: httpboot_revert_delete_template | bool
       redhat.satellite.provisioning_template:
-        username: "{{ satellite_username | default('admin') }}"
-        password: "{{ satellite_password }}"
-        server_url: "{{ satellite_url }}"
-        validate_certs: "{{ satellite_validate_certs | default(true) }}"
-        ca_path: "{{ satellite_ca_path | default(omit) }}"
         state: absent
         name: "{{ httpboot_revert_pxegrub2_name }}"
+      delegate_to: localhost
 
     - name: Show revert summary
       ansible.builtin.debug:

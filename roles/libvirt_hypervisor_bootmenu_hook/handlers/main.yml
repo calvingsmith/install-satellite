@@ -4,3 +4,12 @@
   ansible.builtin.service:
     name: "{{ libvirt_bootmenu_hook_libvirtd_service }}"
     state: restarted
+
+- name: Reload systemd for prefer disk boot webhook
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart prefer disk boot webhook
+  ansible.builtin.systemd:
+    name: prefer-disk-boot-webhook.service
+    state: restarted

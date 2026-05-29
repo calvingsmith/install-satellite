@@ -1,0 +1,15 @@
+---
+# Detect ./ca.crt in the playbook root and set satellite_ca_path when not already defined.
+# Import this task file from pre_tasks so satellite_ca_path is available before module_defaults
+# is evaluated (module_defaults uses ca_path: "{{ satellite_ca_path | default(omit) }}").
+- name: Stat optional repo-root CA for Satellite API (./ca.crt)
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/ca.crt"
+  register: _satellite_soe_ca_stat
+
+- name: Default satellite_ca_path to repo ca.crt when file exists
+  ansible.builtin.set_fact:
+    satellite_ca_path: "{{ playbook_dir }}/ca.crt"
+  when:
+    - satellite_ca_path is not defined
+    - _satellite_soe_ca_stat.stat.exists

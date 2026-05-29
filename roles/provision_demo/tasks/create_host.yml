@@ -1,0 +1,19 @@
+---
+# Create or update the Satellite managed host, set build mode, and start the VM via the
+# libvirt compute resource.
+
+- name: Ensure managed host exists, is in build mode, and libvirt guest is started
+  redhat.satellite.host:
+    state: present
+    name: "{{ lightspeed_demo_vm_fqdn }}"
+    organization: "{{ satellite_organization }}"
+    location: "{{ satellite_location }}"
+    hostgroup: "{{ lightspeed_demo_hostgroup_title }}"
+    managed: true
+    build: true
+    root_pass: "{{ root_password }}"
+    compute_attributes:
+      start: "1"
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+  register: _satellite_host_result

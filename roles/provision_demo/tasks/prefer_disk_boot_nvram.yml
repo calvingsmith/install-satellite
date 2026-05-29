@@ -1,0 +1,48 @@
+---
+# Wait for Foreman build_exited webhook to fix hypervisor NVRAM, with CLI fallback.
+
+- name: Resolve hypervisor boot hook script path
+  ansible.builtin.set_fact:
+    _provision_demo_nvram_script: "{{ libvirt_bootmenu_hook_script_path | default('/etc/libvirt/hooks/qemu.d/50-bootmenu') }}"
+  run_once: true # noqa: run-once[task]
+
+- name: Wait until Foreman host leaves build mode before expecting webhook fix
+  ansible.builtin.import_tasks: wait_build_exited.yml
+
+- name: Wait for build_exited webhook ready marker on hypervisor
+  ansible.builtin.wait_for:
+    path: "{{ libvirt_prefer_disk_boot_webhook_ready_dir | default('/run/provision-demo') }}/{{ lightspeed_demo_vm_fqdn }}.ready"
+    state: present
+    timeout: "{{ provision_demo_build_webhook_ready_timeout | int }}"
+    delay: 10
+  register: _provision_demo_webhook_ready_wait
+  ignore_errors: true
+  when: provision_demo_build_webhook_enabled | default(true) | bool
+  delegate_to: localhost
+  become: true
+  run_once: true # noqa: run-once[task]
+
+- name: Prefer disk boot on hypervisor when webhook did not finish
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ _provision_demo_nvram_script }}"
+      - --prefer-disk-boot-for-domain
+      - "{{ lightspeed_demo_vm_fqdn }}"
+      - --grace
+      - "{{ provision_demo_kickstart_grace_seconds | default(30) | string }}"
+      - --retry-interval
+      - "{{ libvirt_prefer_disk_boot_webhook_retry_interval | default(15) | string }}"
+      - --max-retries
+      - "{{ libvirt_prefer_disk_boot_webhook_max_retries | default(20) | string }}"
+      - --ready-dir
+      - "{{ libvirt_prefer_disk_boot_webhook_ready_dir | default('/run/provision-demo') }}"
+  register: _provision_demo_nvram_cli
+  changed_when: (_provision_demo_nvram_cli.stdout | from_json).changed | default(false)
+  failed_when: _provision_demo_nvram_cli.rc != 0
+  when:
+    - provision_demo_build_webhook_fallback | default(true) | bool
+    - not (provision_demo_build_webhook_enabled | default(true) | bool and (_provision_demo_webhook_ready_wait is succeeded))
+  delegate_to: localhost
+  become: true
+  run_once: true # noqa: run-once[task]

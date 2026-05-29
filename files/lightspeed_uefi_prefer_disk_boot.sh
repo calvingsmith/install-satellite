@@ -55,7 +55,59 @@ if [[ $_ipv6_deleted -eq 1 ]]; then
   done < <(printf '%s\n' "$list" | grep -E '^Boot[0-9A-Fa-f]+')
 fi
 
-# Phase 2: reorder — disk/OS first, then network
+is_netboot_hook_entry() {
+  local t=${1,,}
+  [[ $t =~ netboot|grubx64-httpboot ]] && return 0
+  return 1
+}
+
+# Phase 2: delete libvirt-hook netboot entries (BootNext target for HTTP reprovision)
+_netboot_deleted=0
+for id in "${!title[@]}"; do
+  t="${title[$id]}"
+  if is_netboot_hook_entry "$t"; then
+    efibootmgr -b "$id" -B 2>/dev/null && _netboot_deleted=1 || true
+  fi
+done
+
+if [[ $_netboot_deleted -eq 1 ]]; then
+  list=$(efibootmgr 2>/dev/null) || exit 0
+  unset title; declare -A title
+  while IFS= read -r line; do
+    if [[ $line =~ ^Boot([0-9A-Fa-f]+)\*?[[:space:]]+(.+)$ ]]; then
+      title["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+    fi
+  done < <(printf '%s\n' "$list" | grep -E '^Boot[0-9A-Fa-f]+')
+fi
+
+# Phase 2b: when a disk OS entry exists, remove all network/HTTP/PXE entries so OVMF
+# cannot loop back into provisioning after install (OVMF may recreate them on failed boots).
+_has_disk=0
+for id in "${!title[@]}"; do
+  if is_preferred_os_disk "${title[$id]}"; then
+    _has_disk=1
+    break
+  fi
+done
+if [[ $_has_disk -eq 1 ]]; then
+  _net_deleted=0
+  for id in "${!title[@]}"; do
+    if is_network "${title[$id],,}"; then
+      efibootmgr -b "$id" -B 2>/dev/null && _net_deleted=1 || true
+    fi
+  done
+  if [[ $_net_deleted -eq 1 ]]; then
+    list=$(efibootmgr 2>/dev/null) || exit 0
+    unset title; declare -A title
+    while IFS= read -r line; do
+      if [[ $line =~ ^Boot([0-9A-Fa-f]+)\*?[[:space:]]+(.+)$ ]]; then
+        title["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+      fi
+    done < <(printf '%s\n' "$list" | grep -E '^Boot[0-9A-Fa-f]+')
+  fi
+fi
+
+# Phase 3: reorder — disk/OS first, then network
 bline=$(printf '%s\n' "$list" | grep -E '^BootOrder:' || true)
 [[ -n "$bline" ]] || exit 0
 order_str=${bline#BootOrder:}
@@ -86,7 +138,24 @@ for id in "${cur[@]}"; do
 done
 
 new_str=$(IFS=,; echo "${new[*]}")
-if [[ "$order_str" == "$new_str" ]]; then
-  exit 0
+_changed=0
+if [[ "$order_str" != "$new_str" ]]; then
+  efibootmgr -o "$new_str" && _changed=1 || true
+  list=$(efibootmgr 2>/dev/null) || exit 0
 fi
-exec efibootmgr -o "$new_str"
+
+# Phase 4: clear BootNext when it targets network/HTTP/netboot (overrides BootOrder on reboot)
+bnext_line=$(printf '%s\n' "$list" | grep -E '^BootNext:' || true)
+if [[ -n "$bnext_line" ]]; then
+  bnext_id=${bnext_line#BootNext:}
+  bnext_id=${bnext_id//[[:space:]]/}
+  bnext_title="${title[$bnext_id]-}"
+  if [[ -n "$bnext_id" ]] && { is_network "${bnext_title,,}" || is_netboot_hook_entry "$bnext_title"; }; then
+    efibootmgr --delete-bootnext 2>/dev/null && _changed=1 || true
+    echo "cleared BootNext ($bnext_id: $bnext_title)"
+  fi
+fi
+
+if [[ $_changed -eq 1 ]]; then
+  efibootmgr
+fi

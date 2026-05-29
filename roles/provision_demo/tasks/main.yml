@@ -1,0 +1,39 @@
+---
+- name: Compute Foreman host group title (nested)
+  ansible.builtin.set_fact:
+    lightspeed_demo_hostgroup_title: "{{ lightspeed_demo_hostgroup_parent ~ '/' ~ lightspeed_demo_hostgroup_name }}"
+
+- name: Ensure RHEL 9 installation medium exists in Satellite
+  ansible.builtin.import_tasks: ensure_rhel9_medium.yml
+
+- name: Ensure lightspeed-demo hostgroup content and activation key fields
+  ansible.builtin.import_tasks: ensure_hostgroup.yml
+
+- name: Find and remove stale Satellite host record
+  ansible.builtin.import_tasks: cleanup_stale_host.yml
+
+- name: Destroy and undefine stale libvirt VM
+  ansible.builtin.import_tasks: cleanup_libvirt.yml
+
+- name: Ensure hypervisor build_exited webhook receiver is running
+  ansible.builtin.import_role:
+    name: libvirt_hypervisor_bootmenu_hook
+    tasks_from: build_webhook
+  when: libvirt_prefer_disk_boot_webhook_enabled | default(true) | bool
+  delegate_to: localhost
+  become: true
+  run_once: true # noqa: run-once[task]
+
+- name: Ensure Satellite build_exited webhook targets hypervisor
+  ansible.builtin.import_tasks: ensure_build_webhook.yml
+  when: provision_demo_build_webhook_enabled | default(true) | bool
+
+- name: Create Satellite managed host, set build mode, and start VM
+  ansible.builtin.import_tasks: create_host.yml
+  when: provision_demo_vm | default(true) | bool
+
+- name: Resolve IP for SSH wait
+  ansible.builtin.import_tasks: resolve_ip.yml
+
+- name: Wait for SSH on the provisioned guest
+  ansible.builtin.import_tasks: wait_ssh.yml

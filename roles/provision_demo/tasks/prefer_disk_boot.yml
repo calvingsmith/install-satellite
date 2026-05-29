@@ -1,0 +1,42 @@
+---
+# After kickstart completes, prefer disk boot over HTTP/PXE and disable libvirt HTTP BootNext preseeding.
+
+- name: Add provisioned guest to in-memory inventory for post-install tasks
+  ansible.builtin.add_host:
+    name: "{{ lightspeed_demo_vm_fqdn }}"
+    ansible_host: "{{ lightspeed_demo_vm_wait_host | default(lightspeed_demo_vm_fqdn) }}"
+    ansible_user: root
+    ansible_password: "{{ root_password }}"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+    groups: _provisioned_guest
+  run_once: true # noqa: run-once[task]
+
+- name: Copy UEFI prefer-disk script to provisioned guest
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/lightspeed_uefi_prefer_disk_boot.sh"
+    dest: /tmp/uefi_prefer_disk_boot.sh
+    mode: "0700"
+  delegate_to: "{{ lightspeed_demo_vm_fqdn }}"
+  run_once: true # noqa: run-once[task]
+
+- name: Reorder UEFI BootOrder and clear HTTP BootNext on provisioned guest
+  ansible.builtin.command: /tmp/uefi_prefer_disk_boot.sh
+  delegate_to: "{{ lightspeed_demo_vm_fqdn }}"
+  register: _uefi_boot_fix
+  changed_when: _uefi_boot_fix.stdout | length > 0
+  failed_when: false
+  run_once: true # noqa: run-once[task]
+
+- name: Mark VM as provisioned — disable HTTP BootNext for all future boots
+  ansible.builtin.file:
+    path: "/etc/libvirt/hooks/no-httpboot-{{ lightspeed_demo_vm_fqdn }}"
+    state: touch
+    mode: "0644"
+  become: true
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Show UEFI boot fix result
+  ansible.builtin.debug:
+    msg: "{{ _uefi_boot_fix.stdout | default('efibootmgr not available or BIOS system') }}"
+  run_once: true # noqa: run-once[task]

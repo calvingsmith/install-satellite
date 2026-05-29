@@ -1,0 +1,43 @@
+---
+- name: Flush DNS cache on the Ansible controller so the provisioned guest can resolve — {{ lightspeed_demo_vm_fqdn }}
+  when: lightspeed_demo_flush_controller_cache | default(true) | bool
+  ansible.builtin.command: resolvectl flush-caches
+  become: true
+  run_once: true # noqa: run-once[task]
+  register: lightspeed_controller_dns_flush
+  ignore_errors: true
+  changed_when: lightspeed_controller_dns_flush.rc is defined and lightspeed_controller_dns_flush.rc == 0
+
+- name: Remove stale SSH host keys for reprovisioned guest on the controller
+  ansible.builtin.import_tasks: clear_controller_known_hosts.yml
+
+- name: Fix hypervisor NVRAM BootOrder after kickstart reboot
+  ansible.builtin.import_tasks: prefer_disk_boot_nvram.yml
+  when:
+    - provision_demo_prefer_disk_boot | default(true) | bool
+    - provision_demo_wait_ssh | default(true) | bool
+
+- name: Wait for guest SSH after provisioning (kickstart / first boot)
+  when: provision_demo_wait_ssh | default(true) | bool
+  ansible.builtin.wait_for:
+    host: "{{ lightspeed_demo_vm_wait_host | default(lightspeed_demo_vm_fqdn) }}"
+    port: 22
+    delay: "{{ provision_demo_ssh_wait_delay | int }}"
+    timeout: "{{ provision_demo_ssh_wait_timeout | int }}"
+    state: started
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Prefer disk boot and disable HTTP BootNext preseeding after provisioning
+  ansible.builtin.import_tasks: prefer_disk_boot.yml
+  when:
+    - provision_demo_wait_ssh | default(true) | bool
+    - provision_demo_prefer_disk_boot | default(true) | bool
+
+- name: Provision summary
+  ansible.builtin.debug:
+    msg: >-
+      Satellite is building {{ lightspeed_demo_vm_fqdn }} in host group [{{ lightspeed_demo_hostgroup_title }}].
+      When kickstart finishes, add ansible_host if needed and run lightspeed-demo-client.yml with
+      --limit {{ lightspeed_demo_vm_fqdn }} (omit --tags provision_demo) to apply demo roles.
+  run_once: true # noqa: run-once[task]

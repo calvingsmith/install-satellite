@@ -1,0 +1,48 @@
+---
+# Variables intentionally use the shared lightspeed_demo_ prefix (not provision_demo_)
+# so they can be overridden from surrounding playbooks and -e without a role-qualified name.
+# noqa: var-naming[no-role-prefix] applies to all lightspeed_demo_* vars in this file.
+
+# FQDN of the VM to provision.
+lightspeed_demo_vm_fqdn: test-ls.laptop.lab # noqa: var-naming[no-role-prefix]
+
+# Foreman host group path components (nested title = parent/name).
+lightspeed_demo_hostgroup_parent: "{{ rhel9_hostgroup_name | default('rhel9-server') }}" # noqa: var-naming[no-role-prefix]
+lightspeed_demo_hostgroup_name: lightspeed-demo # noqa: var-naming[no-role-prefix]
+
+# Inventory hostname of the Satellite server — used as the delegate_to target for the DHCP
+# cleanup task, which must run on Satellite itself via SSH.
+lightspeed_demo_satellite_host: "{{ groups['satellite_group'][0] }}" # noqa: var-naming[no-role-prefix]
+
+# Set false to skip the Satellite host create/start task (dry-run the setup steps only).
+provision_demo_vm: true
+
+# SSH wait behaviour after the host is started.
+provision_demo_wait_ssh: true
+provision_demo_ssh_wait_delay: 90
+provision_demo_ssh_wait_timeout: 3600
+
+# After SSH is up, reorder UEFI BootOrder to prefer disk and create no-httpboot flag on hypervisor.
+provision_demo_prefer_disk_boot: true
+
+# Foreman build_exited webhook → hypervisor disk-boot fix (see ensure_build_webhook.yml).
+provision_demo_build_webhook_enabled: true
+provision_demo_build_webhook_name: Provision Demo Prefer Disk Boot
+provision_demo_build_webhook_template_name: Provision Demo Build Exited JSON
+provision_demo_build_webhook_url: "http://{{ gateway_ip | default('192.168.122.1') }}:8765/prefer-disk-boot"
+provision_demo_build_webhook_fallback: true
+# Seconds to wait for the hypervisor ready marker after build=false (webhook grace + NVRAM fix).
+provision_demo_build_webhook_ready_timeout: 600
+
+# Grace period passed to hypervisor CLI when webhook fallback runs (build_exited webhook uses 30s by default).
+provision_demo_kickstart_grace_seconds: 30
+
+# DNS cache flush on the Ansible controller after provisioning so the new FQDN resolves.
+lightspeed_demo_flush_controller_cache: true # noqa: var-naming[no-role-prefix]
+
+# known_hosts management on the controller.
+lightspeed_demo_clear_known_hosts: true # noqa: var-naming[no-role-prefix]
+lightspeed_demo_extra_known_host_names: [] # noqa: var-naming[no-role-prefix]
+
+# Set false to skip hostgroup parameter push before build.
+lightspeed_demo_ensure_hostgroup_parameters: true # noqa: var-naming[no-role-prefix]

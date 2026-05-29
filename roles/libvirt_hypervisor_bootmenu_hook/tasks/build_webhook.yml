@@ -1,0 +1,51 @@
+---
+# Installs a small HTTP receiver on the libvirt hypervisor. Foreman build_exited webhooks POST
+# here instead of Ansible polling NVRAM while QEMU holds the qcow2 lock.
+
+- name: Ensure provision-demo ready marker directory exists
+  ansible.builtin.file:
+    path: "{{ libvirt_prefer_disk_boot_webhook_ready_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install prefer-disk-boot webhook receiver script
+  ansible.builtin.copy:
+    src: prefer_disk_boot_webhook.py
+    dest: "{{ libvirt_prefer_disk_boot_webhook_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart prefer disk boot webhook
+
+- name: Install prefer-disk-boot webhook systemd unit
+  ansible.builtin.template:
+    src: prefer-disk-boot-webhook.service.j2
+    dest: /etc/systemd/system/prefer-disk-boot-webhook.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for prefer disk boot webhook
+    - Restart prefer disk boot webhook
+
+- name: Enable and start prefer-disk-boot webhook receiver
+  ansible.builtin.systemd:
+    name: prefer-disk-boot-webhook.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Allow Satellite to POST build_exited webhooks on libvirt bridge
+  ansible.builtin.command: >-
+    firewall-cmd --permanent --zone=libvirt
+    --add-port={{ libvirt_prefer_disk_boot_webhook_port | int }}/tcp
+  register: _libvirt_webhook_fw_add
+  changed_when: "'ALREADY_ENABLED' not in (_libvirt_webhook_fw_add.stderr | default(''))"
+  failed_when: false
+
+- name: Reload firewalld after webhook port change
+  ansible.builtin.command: firewall-cmd --reload
+  changed_when: _libvirt_webhook_fw_add is changed
+  when: _libvirt_webhook_fw_add is changed

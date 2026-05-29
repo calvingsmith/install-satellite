@@ -1,0 +1,90 @@
+---
+# Associate uploaded templates with the target OS and set the default PXEGrub2 template.
+# Called from main.yml when satellite_soe_templates_link_os is true.
+
+- name: Resolve Foreman search string for target OS
+  ansible.builtin.set_fact:
+    _soe_templates_os_search: >-
+      {{
+        satellite_soe_templates_os_search
+        if satellite_soe_templates_os_search is defined
+        else (
+          'name = "RedHat" and major = 9 and minor = "'
+          ~ (satellite_soe_templates_rhel9_minor | default('7') | string)
+          ~ '"'
+        )
+      }}
+
+- name: Look up target operating system (full API record)
+  redhat.satellite.resource_info:
+    resource: operatingsystems
+    search: "{{ _soe_templates_os_search }}"
+    full_details: true
+  register: _soe_templates_os_info
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Require exactly one operating system for the search
+  ansible.builtin.assert:
+    that:
+      - _soe_templates_os_info.resources | length == 1
+    fail_msg: >-
+      Expected one OS for search [{{ _soe_templates_os_search }}], got {{ _soe_templates_os_info.resources | length }}.
+      Set -e satellite_soe_templates_rhel9_minor=<n> to match your Satellite OS minor, or pass a full
+      -e satellite_soe_templates_os_search='...' that returns exactly one operatingsystem.
+
+- name: Cache OS entity and existing provisioning template names
+  ansible.builtin.set_fact:
+    _soe_templates_os_entity: "{{ _soe_templates_os_info.resources[0] }}"
+    _soe_templates_base_names: >-
+      {{
+        satellite_soe_templates_existing_provisioning_templates
+        if satellite_soe_templates_existing_provisioning_templates is defined
+        else (_soe_templates_os_info.resources[0].provisioning_templates | default([], true) | map(attribute='name') | list)
+      }}
+
+- name: Merge uploaded templates into the OS provisioning template list
+  ansible.builtin.set_fact:
+    _soe_templates_merged_names: >-
+      {{
+        _soe_templates_base_names
+        | union(satellite_soe_templates_list | map(attribute='name') | list)
+        | unique
+        | list
+      }}
+
+- name: Refuse to overwrite OS template list when no existing templates were found
+  when:
+    - satellite_soe_templates_existing_provisioning_templates is not defined
+    - _soe_templates_base_names | length == 0
+  ansible.builtin.fail:
+    msg: >-
+      No provisioning_templates are linked to this OS and satellite_soe_templates_existing_provisioning_templates
+      was not set. Pass the full list of template names to keep, e.g.
+      -e '{"satellite_soe_templates_existing_provisioning_templates":["Kickstart default","Kickstart default finish",...]}'
+
+- name: Associate merged provisioning templates with the operating system
+  redhat.satellite.operatingsystem:
+    state: present
+    name: "{{ _soe_templates_os_entity.name }}"
+    major: "{{ _soe_templates_os_entity.major }}"
+    minor: "{{ _soe_templates_os_entity.minor }}"
+    os_family: "{{ _soe_templates_os_entity.family }}"
+    provisioning_templates: "{{ _soe_templates_merged_names }}"
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Set default PXEGrub2 template for the operating system
+  redhat.satellite.os_default_template:
+    state: present
+    operatingsystem: "{{ _soe_templates_os_entity.title }}"
+    template_kind: PXEGrub2
+    provisioning_template: "{{ satellite_soe_templates_pxegrub2_name }}"
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Show template link result
+  ansible.builtin.debug:
+    msg: >-
+      Templates uploaded and linked to OS [{{ _soe_templates_os_entity.title }}].
+      Default PXEGrub2 set to [{{ satellite_soe_templates_pxegrub2_name }}].

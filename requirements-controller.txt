@@ -1,0 +1,5 @@
+# Python packages required on the Ansible controller for redhat.satellite modules
+# (delegate_to: localhost tasks). Install into your controller venv:
+#   activate/bin/pip install -r requirements-controller.txt
+requests>=2.4.2
+PyYAML

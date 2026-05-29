@@ -1,0 +1,8 @@
+<%# Foreman WebhookTemplate — rendered by Satellite, not Ansible. #%>
+<%=
+payload({
+  hostname: @payload[:hostname],
+  host_id: @payload[:id],
+  event_name: @event_name,
+})
+-%>

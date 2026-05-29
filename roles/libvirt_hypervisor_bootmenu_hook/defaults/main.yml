@@ -9,3 +9,15 @@ libvirt_bootmenu_hook_libvirtd_service: libvirtd
 # the NVRAM instance does not yet exist (fresh / re-provisioned VM).
 # Set to empty string to disable NVRAM preseed.
 libvirt_bootmenu_http_uri: ""
+
+# Foreman build_exited webhook receiver (see tasks/build_webhook.yml).
+libvirt_prefer_disk_boot_webhook_enabled: true
+libvirt_prefer_disk_boot_webhook_script_path: /usr/local/sbin/prefer_disk_boot_webhook.py
+libvirt_prefer_disk_boot_webhook_bind: "{{ gateway_ip | default('192.168.122.1') }}"
+libvirt_prefer_disk_boot_webhook_port: 8765
+libvirt_prefer_disk_boot_webhook_ready_dir: /run/provision-demo
+libvirt_prefer_disk_boot_webhook_grace_seconds: 30
+libvirt_prefer_disk_boot_webhook_retry_interval: 15
+libvirt_prefer_disk_boot_webhook_max_retries: 20
+# Optional shared secret; when set, Satellite webhook must send header X-Provision-Demo-Secret.
+libvirt_prefer_disk_boot_webhook_secret: ""

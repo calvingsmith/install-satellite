@@ -5,17 +5,6 @@
 #   https://<satellite>/pulp/content/<org_label>/Library/content/dist/rhel9/$version/$arch/baseos/kickstart
 # This URL is NOT automatically registered as a Foreman installation medium when the Katello repo is synced.
 # Without a medium, Foreman rejects host create/update with "medium_id: can't be blank".
-#
-# This task file:
-#   1. Creates the Foreman installation medium (idempotent; state: present).
-#   2. Links the medium to all RedHat 9.x OSes in Foreman.
-#   3. Sets the medium on the rhel9-server parent hostgroup so nested groups inherit it.
-#
-# Variables used (all defaulted):
-#   satellite_url, satellite_username, satellite_password, satellite_validate_certs, satellite_ca_path
-#   satellite_organization, satellite_location
-#   rhel9_hostgroup_name (default: rhel9-server)
-#   lightspeed_demo_rhel9_medium_name (default: computed from satellite_url + org label)
 
 - name: Compute RHEL 9 kickstart medium name and path
   ansible.builtin.set_fact:
@@ -33,11 +22,6 @@
 
 - name: Ensure RHEL 9 kickstart installation medium exists in Foreman
   redhat.satellite.installation_medium:
-    username: "{{ satellite_username | default('admin') }}"
-    password: "{{ satellite_password }}"
-    server_url: "{{ satellite_url }}"
-    validate_certs: "{{ satellite_validate_certs | default(true) }}"
-    ca_path: "{{ satellite_ca_path | default(omit) }}"
     state: present
     name: "{{ _rhel9_medium_name }}"
     path: "{{ _rhel9_medium_path }}"
@@ -47,27 +31,19 @@
     locations:
       - "{{ satellite_location | default(omit) }}"
   register: _rhel9_medium_result
+  delegate_to: localhost
   run_once: true
 
 - name: Find all RedHat 9 operating systems to link the medium
   redhat.satellite.resource_info:
-    username: "{{ satellite_username | default('admin') }}"
-    password: "{{ satellite_password }}"
-    server_url: "{{ satellite_url }}"
-    validate_certs: "{{ satellite_validate_certs | default(true) }}"
-    ca_path: "{{ satellite_ca_path | default(omit) }}"
     resource: operatingsystems
     search: 'name ~ "RedHat" and major = "9"'
   register: _rhel9_os_list
+  delegate_to: localhost
   run_once: true
 
 - name: Link RHEL 9 kickstart medium to each RedHat 9 OS (preserve existing media)
   redhat.satellite.operatingsystem:
-    username: "{{ satellite_username | default('admin') }}"
-    password: "{{ satellite_password }}"
-    server_url: "{{ satellite_url }}"
-    validate_certs: "{{ satellite_validate_certs | default(true) }}"
-    ca_path: "{{ satellite_ca_path | default(omit) }}"
     state: present
     name: "{{ item.name }}"
     major: "{{ item.major }}"
@@ -82,19 +58,16 @@
   loop: "{{ _rhel9_os_list.resources | default([]) }}"
   loop_control:
     label: "{{ item.title | default(item.name) }}"
+  delegate_to: localhost
   run_once: true
-  ignore_errors: true
+  failed_when: false
 
 - name: Set RHEL 9 kickstart medium and content source on rhel9-server hostgroup
   redhat.satellite.hostgroup:
-    username: "{{ satellite_username | default('admin') }}"
-    password: "{{ satellite_password }}"
-    server_url: "{{ satellite_url }}"
-    validate_certs: "{{ satellite_validate_certs | default(true) }}"
-    ca_path: "{{ satellite_ca_path | default(omit) }}"
     state: present
     organization: "{{ satellite_organization | default('Default Organization') }}"
     name: "{{ rhel9_hostgroup_name | default('rhel9-server') }}"
     medium: "{{ _rhel9_medium_name }}"
     content_source: "{{ satellite_smart_proxy_name | default('satellite.laptop.lab') }}"
+  delegate_to: localhost
   run_once: true

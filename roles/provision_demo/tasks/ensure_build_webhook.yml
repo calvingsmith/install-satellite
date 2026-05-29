@@ -1,0 +1,153 @@
+---
+# Register Foreman build_exited webhook → hypervisor prefer-disk-boot receiver.
+
+- name: Allow Foreman webhook HTTP delivery through SELinux on Satellite
+  ansible.builtin.import_tasks: ensure_webhook_selinux.yml
+
+- name: Read Foreman build_exited webhook template body
+  ansible.builtin.set_fact:
+    _provision_demo_webhook_template_body: >-
+      {{ lookup('ansible.builtin.file', role_path ~ '/templates/webhook_template_build_exited_prefer_disk_boot.erb') }}
+  run_once: true # noqa: run-once[task]
+
+- name: Look up existing build_exited webhook template
+  ansible.builtin.uri:
+    url: >-
+      {{ satellite_url | regex_replace('/$', '') }}/api/v2/webhook_templates?search={{
+        ('name="' ~ provision_demo_build_webhook_template_name ~ '"') | urlencode
+      }}&per_page=1
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    return_content: true
+  register: _provision_demo_webhook_template_lookup
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Create build_exited webhook template
+  ansible.builtin.uri:
+    url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/webhook_templates"
+    method: POST
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    body_format: json
+    body:
+      webhook_template:
+        name: "{{ provision_demo_build_webhook_template_name }}"
+        template: "{{ _provision_demo_webhook_template_body }}"
+        locked: false
+    status_code: [200, 201]
+  register: _provision_demo_webhook_template_create
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+  when: (_provision_demo_webhook_template_lookup.json.results | default([]) | length) == 0
+
+- name: Update build_exited webhook template
+  ansible.builtin.uri:
+    url: >-
+      {{ satellite_url | regex_replace('/$', '') }}/api/v2/webhook_templates/{{ _provision_demo_webhook_template_lookup.json.results[0].id }}
+    method: PUT
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    body_format: json
+    body:
+      webhook_template:
+        template: "{{ _provision_demo_webhook_template_body }}"
+    status_code: [200]
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+  when: (_provision_demo_webhook_template_lookup.json.results | default([]) | length) > 0
+
+- name: Resolve build_exited webhook template ID
+  ansible.builtin.set_fact:
+    _provision_demo_webhook_template_id: >-
+      {{
+        (_provision_demo_webhook_template_create.json | default({})).id
+        | default(_provision_demo_webhook_template_lookup.json.results[0].id)
+      }}
+  run_once: true # noqa: run-once[task]
+
+- name: Look up existing build_exited webhook
+  ansible.builtin.uri:
+    url: >-
+      {{ satellite_url | regex_replace('/$', '') }}/api/v2/webhooks?search={{
+        ('name="' ~ provision_demo_build_webhook_name ~ '"') | urlencode
+      }}&per_page=1
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    return_content: true
+  register: _provision_demo_webhook_lookup
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Build webhook request body
+  ansible.builtin.set_fact:
+    _provision_demo_webhook_body:
+      webhook:
+        name: "{{ provision_demo_build_webhook_name }}"
+        target_url: "{{ provision_demo_build_webhook_url }}"
+        event: build_exited
+        http_method: POST
+        http_content_type: application/json
+        enabled: true
+        verify_ssl: false
+        webhook_template_id: "{{ _provision_demo_webhook_template_id | int }}"
+  run_once: true # noqa: run-once[task]
+
+- name: Add shared secret header to webhook body
+  ansible.builtin.set_fact:
+    _provision_demo_webhook_body: >-
+      {{
+        _provision_demo_webhook_body | combine(
+          {'webhook': _provision_demo_webhook_body.webhook | combine(
+            {'http_headers': {'X-Provision-Demo-Secret': libvirt_prefer_disk_boot_webhook_secret}}
+          )},
+          recursive=True
+        )
+      }}
+  when: libvirt_prefer_disk_boot_webhook_secret | default('') | length > 0
+  run_once: true # noqa: run-once[task]
+
+- name: Create build_exited webhook
+  ansible.builtin.uri:
+    url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/webhooks"
+    method: POST
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    body_format: json
+    body: "{{ _provision_demo_webhook_body }}"
+    status_code: [200, 201]
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+  when: (_provision_demo_webhook_lookup.json.results | default([]) | length) == 0
+
+- name: Update build_exited webhook
+  ansible.builtin.uri:
+    url: >-
+      {{ satellite_url | regex_replace('/$', '') }}/api/v2/webhooks/{{ _provision_demo_webhook_lookup.json.results[0].id }}
+    method: PUT
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    body_format: json
+    body: "{{ _provision_demo_webhook_body }}"
+    status_code: [200]
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+  when: (_provision_demo_webhook_lookup.json.results | default([]) | length) > 0

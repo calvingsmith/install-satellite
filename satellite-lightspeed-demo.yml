@@ -41,10 +41,11 @@
 # Override nested group name or parent:
 #   -e lightspeed_demo_hostgroup_parent=rhel9-server -e lightspeed_demo_hostgroup_name=lightspeed-demo
 #
-# The nested host group sets SOE host params: lab_permit_root_password_ssh (root+password for Ansible) and
-# lab_bootstrap_authorized_key (one line from the controller’s ~/.ssh/casmith.pub when the file exists and
-# the variable is not set in laptop.lab). Re-publish the SOE template and rebuild the VM so kickstart
-# seeds /root/.ssh/authorized_keys; then lightspeed-demo-client can use ~/.ssh/casmith for the first SSH.
+# The nested host group sets SOE host params: lab_permit_root_password_ssh (root+password for Ansible),
+# host_registration_insights (Insights kickstart snippet in %post), and lab_bootstrap_authorized_key
+# (one line from the controller’s ~/.ssh/casmith.pub when the file exists and the variable is not set
+# in laptop.lab). Re-publish the SOE template and rebuild the VM so kickstart seeds
+# /root/.ssh/authorized_keys; then lightspeed-demo-client can use ~/.ssh/casmith for the first SSH.
 
 - name: Enable Red Hat Lightspeed in Satellite (IOP — advisor + vulnerability preview)
   hosts: satellite_group
@@ -310,6 +311,7 @@
           {{
             [
               {'name': 'lab_permit_root_password_ssh', 'parameter_type': 'boolean', 'value': true},
+              {'name': 'host_registration_insights', 'parameter_type': 'boolean', 'value': true},
               {'name': 'network_zone', 'parameter_type': 'string', 'value': 'internal'}
             ]
             + (

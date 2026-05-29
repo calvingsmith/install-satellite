@@ -1,0 +1,18 @@
+---
+# Poll Foreman until kickstart sets build=false (build_exited webhook fires here).
+
+- name: Wait until Foreman reports kickstart complete (build=false)
+  ansible.builtin.uri:
+    url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts/{{ lightspeed_demo_vm_fqdn }}"
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    return_content: true
+  register: _provision_demo_build_poll
+  until: not (_provision_demo_build_poll.json.build | default(true) | bool)
+  retries: "{{ ((provision_demo_ssh_wait_timeout | int) // 30) | int }}"
+  delay: 30
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]

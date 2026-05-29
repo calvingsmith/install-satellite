@@ -1,0 +1,144 @@
+---
+# Full stale-host cleanup sequence:
+#   1. Remove stale DHCP lease on Satellite (omshell or foreman-proxy REST, runs via SSH)
+#   2. Find the Foreman host record and strip compute resource linkage (prevents Satellite
+#      from trying to delete a VM that virsh has already destroyed)
+#   3. Delete the Foreman host record
+
+- name: Remove stale DHCP reservation on Satellite (omshell then foreman-proxy REST)
+  ansible.builtin.shell: |
+    set -o pipefail
+    FQDN="{{ lightspeed_demo_vm_fqdn }}"
+    NETWORK="{{ foreman_subnet_network }}"
+    PROXY="https://$(hostname -f):9090"
+    echo "=== STALE DHCP CLEANUP for $FQDN ==="
+    if command -v omshell >/dev/null 2>&1; then
+      echo "USING_OMSHELL"
+      result=$(printf 'server 127.0.0.1\nport 7911\nconnect\nnew host\nset name = "%s"\nopen\nremove\n' "$FQDN" | omshell 2>&1 || true)
+      echo "OMSHELL_RESULT: $result"
+      echo "$result" | grep -qi "remove" && echo "OMSHELL_REMOVED" || echo "OMSHELL_NOT_REMOVED"
+    else
+      echo "OMSHELL_NOT_FOUND trying proxy REST API"
+      CERT="" KEY="" CA=""
+      for f in /etc/foreman/client_cert.pem \
+          "/etc/puppet/ssl/certs/$(hostname -f).pem" \
+          "/var/lib/puppet/ssl/certs/$(hostname -f).pem"; do
+        [ -f "$f" ] && CERT="$f" && break
+      done
+      for f in /etc/foreman/client_key.pem \
+          "/etc/puppet/ssl/private_keys/$(hostname -f).pem" \
+          "/var/lib/puppet/ssl/private_keys/$(hostname -f).pem"; do
+        [ -f "$f" ] && KEY="$f" && break
+      done
+      for f in /etc/puppet/ssl/certs/ca.pem \
+          /var/lib/puppet/ssl/certs/ca.pem \
+          /etc/foreman-proxy/foreman_ssl_ca.pem; do
+        [ -f "$f" ] && CA="$f" && break
+      done
+      echo "CERT=$CERT KEY=$KEY CA=$CA"
+      if [ -n "$CERT" ] && [ -n "$KEY" ] && [ -n "$CA" ]; then
+        ENTRIES=$(curl -sf -X GET "$PROXY/dhcp/$NETWORK" \
+          --cert "$CERT" --key "$KEY" --cacert "$CA" 2>/dev/null || echo "[]")
+        echo "SUBNET_ENTRIES: $ENTRIES"
+        IP=$(echo "$ENTRIES" | python3 -c \
+          "import json,sys; d=json.load(sys.stdin); f='$FQDN'.lower(); s=f.split('.')[0]; r=[e.get('ip','') for e in d if e.get('hostname','').lower() in (f,s) or e.get('name','').lower() in (f,s)]; print(r[0] if r else '')" \
+          2>/dev/null || true)
+        if [ -n "$IP" ]; then
+          echo "FOUND_STALE_IP=$IP"
+          curl -sf -X DELETE "$PROXY/dhcp/$NETWORK/$IP" \
+            --cert "$CERT" --key "$KEY" --cacert "$CA" \
+            2>/dev/null && echo "REST_DELETED" || echo "REST_DELETE_FAILED"
+        else
+          echo "STALE_IP_NOT_FOUND"
+        fi
+      else
+        echo "NO_CERTS_FOUND cannot delete via REST API"
+      fi
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ lightspeed_demo_satellite_host }}"
+  become: true
+  register: _dhcp_cleanup_ssh
+  failed_when: false
+  changed_when: >-
+    'OMSHELL_REMOVED' in (_dhcp_cleanup_ssh.stdout | default('')) or
+    'REST_DELETED' in (_dhcp_cleanup_ssh.stdout | default(''))
+  run_once: true # noqa: run-once[task]
+
+- name: Find stale Satellite host record before reprovisioning # noqa: var-naming[no-role-prefix]
+  ansible.builtin.uri:
+    url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts?search=name+%3D+{{ (lightspeed_demo_vm_fqdn | urlencode) }}&per_page=5"
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    return_content: true
+  register: _stale_host_search
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+  failed_when: false
+
+- name: Get full stale host details for cleanup # noqa: var-naming[no-role-prefix]
+  ansible.builtin.uri:
+    url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts/{{ (_stale_host_search.json.results | default([]) | first).id | default('0') }}"
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    return_content: true
+  register: _stale_host_detail
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+  failed_when: false
+  when: (_stale_host_search.json.results | default([]) | length) > 0
+
+- name: Set stale host facts for cleanup # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    _stale_host_id: "{{ (_stale_host_search.json.results | default([]) | first).id | default('') | string }}"
+    _stale_host_medium_id: "{{ _stale_host_detail.json.medium_id | default('') | string }}"
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Strip compute resource from stale host for clean deletion # noqa: var-naming[no-role-prefix]
+  ansible.builtin.uri:
+    url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts/{{ _stale_host_id }}"
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    method: PUT
+    body_format: json
+    body:
+      host:
+        managed: true
+        medium_id: "{{ _stale_host_medium_id | int if _stale_host_medium_id | length > 0 else omit }}"
+        compute_resource_id: ""
+    return_content: true
+    status_code: [200, 201, 422, 404]
+  register: _stale_host_patch # noqa: var-naming[no-role-prefix]
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+  failed_when: false
+  when: _stale_host_id | string | length > 0
+
+- name: Delete stale Satellite host record before reprovisioning
+  ansible.builtin.uri:
+    url: "{{ satellite_url | regex_replace('/$', '') }}/api/v2/hosts/{{ _stale_host_id }}"
+    url_username: "{{ satellite_username | default('admin') }}"
+    url_password: "{{ satellite_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ satellite_validate_certs | default(true) }}"
+    ca_path: "{{ satellite_ca_path | default(omit) }}"
+    method: DELETE
+    return_content: true
+    status_code: [200, 201, 204, 404, 422]
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+  failed_when: false
+  when:
+    - _stale_host_id | string | length > 0
+    - (_stale_host_patch.status | default(0)) in [200, 201]

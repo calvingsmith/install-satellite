@@ -1,0 +1,21 @@
+[Unit]
+Description=Foreman build_exited webhook receiver for libvirt disk boot fix
+After=network-online.target libvirtd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PROVISION_DEMO_WEBHOOK_SECRET={{ libvirt_prefer_disk_boot_webhook_secret | default('') }}
+ExecStart=/usr/bin/python3 {{ libvirt_prefer_disk_boot_webhook_script_path }} \
+  --bind {{ libvirt_prefer_disk_boot_webhook_bind }} \
+  --port {{ libvirt_prefer_disk_boot_webhook_port | int }} \
+  --script {{ libvirt_bootmenu_hook_script_path }} \
+  --grace {{ libvirt_prefer_disk_boot_webhook_grace_seconds | int }} \
+  --retry-interval {{ libvirt_prefer_disk_boot_webhook_retry_interval | int }} \
+  --max-retries {{ libvirt_prefer_disk_boot_webhook_max_retries | int }} \
+  --ready-dir {{ libvirt_prefer_disk_boot_webhook_ready_dir }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

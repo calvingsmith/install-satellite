@@ -1,0 +1,22 @@
+---
+# Upload SOE provisioning templates to Satellite.
+# Credentials are supplied via module_defaults at the play level; see plan for the block format.
+- name: Upload SOE provisioning templates to Satellite
+  redhat.satellite.provisioning_template:
+    state: present
+    name: "{{ item.name }}"
+    kind: "{{ item.kind }}"
+    file_name: "{{ item.file_name }}"
+    organizations:
+      - "{{ satellite_organization }}"
+    locations:
+      - "{{ satellite_location }}"
+  loop: "{{ satellite_soe_templates_list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Link templates to OS and set default PXEGrub2
+  ansible.builtin.import_tasks: link_os.yml
+  when: satellite_soe_templates_link_os | bool

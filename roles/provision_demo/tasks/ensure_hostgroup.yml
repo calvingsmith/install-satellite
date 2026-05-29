@@ -1,0 +1,17 @@
+---
+- name: Ensure lightspeed-demo hostgroup has Katello content fields set
+  redhat.satellite.hostgroup:
+    state: present
+    organization: "{{ satellite_organization }}"
+    parent: "{{ lightspeed_demo_hostgroup_parent }}"
+    name: "{{ lightspeed_demo_hostgroup_name }}"
+    content_source: "{{ rhel9_hostgroup_content_source | default(satellite_smart_proxy_name) | default('satellite.laptop.lab') }}"
+    lifecycle_environment: "{{ rhel9_activation_key_lifecycle_environment | default('Library') }}"
+    content_view: "{{ rhel9_activation_key_content_view | default('Default Organization View') }}"
+    activation_keys: "{{ rhel9_activation_key_name | default('rhel9-standard') }}"
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Ensure lightspeed-demo hostgroup parameters are set in Satellite
+  ansible.builtin.import_tasks: ensure_hostgroup_parameters.yml
+  when: lightspeed_demo_ensure_hostgroup_parameters | default(true) | bool

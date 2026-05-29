@@ -1,0 +1,31 @@
+---
+# Full list of SOE provisioning templates to upload to Satellite.
+# Override satellite_soe_templates_list to upload a subset (e.g. PXEGrub2 only in httpboot-demo.yml).
+satellite_soe_templates_list:
+  - name: soe_uefi_prefer_disk_boot
+    kind: snippet
+    file_name: "{{ playbook_dir }}/templates/prov_template_snippet_soe_uefi_prefer_disk_boot.j2"
+  - name: soe_kickstart_networking_setup
+    kind: snippet
+    file_name: "{{ playbook_dir }}/templates/prov_template_snippet_soe_kickstart_networking_setup.j2"
+  - name: soe_kickstart_ifcfg_generic_interface
+    kind: snippet
+    file_name: "{{ playbook_dir }}/templates/prov_template_snippet_soe_kickstart_ifcfg_generic_interface.j2"
+  - name: SOE Kickstart Default
+    kind: provision
+    file_name: "{{ playbook_dir }}/templates/prov_template_soe_kickstart_default.j2"
+  - name: SOE Kickstart Default PXEGrub2
+    kind: PXEGrub2
+    file_name: "{{ playbook_dir }}/templates/prov_template_soe_kickstart_default_pxegrub2.j2"
+
+# Set true to also link uploaded templates to the target OS and set the default PXEGrub2.
+# Used by httpboot-demo.yml; left false for lightspeed-demo-client.yml (OS already linked
+# by satellite-lightspeed-demo.yml or post-install.yml).
+satellite_soe_templates_link_os: false
+
+# Foreman OS search used by link_os.yml.  Override with satellite_soe_templates_os_search for
+# a full custom search string, or with satellite_soe_templates_rhel9_minor to pin a different minor.
+satellite_soe_templates_rhel9_minor: "7"
+
+# Name of the PXEGrub2 template to set as OS default (must appear in satellite_soe_templates_list).
+satellite_soe_templates_pxegrub2_name: "SOE Kickstart Default PXEGrub2"

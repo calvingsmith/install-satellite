@@ -1,0 +1,39 @@
+---
+# Destroy and undefine the existing libvirt VM (if any), then remove the HTTP-boot flag
+# so the hook preseeds HTTP BootNext on the next start.
+
+- name: Cleanup libvirt VM on hypervisor (controller) before reprovisioning # noqa: risky-shell-pipe
+  ansible.builtin.shell: |
+    set -o pipefail
+    FQDN="{{ lightspeed_demo_vm_fqdn }}"
+    if virsh dominfo "$FQDN" >/dev/null 2>&1; then
+      VM_MAC=$(virsh domiflist "$FQDN" 2>/dev/null | grep -oE '([0-9a-f]{2}:){5}[0-9a-f]{2}' | head -1 || true)
+      echo "LIBVIRT_FOUND mac=${VM_MAC}"
+      virsh destroy "$FQDN" 2>/dev/null || true
+      virsh undefine "$FQDN" --nvram 2>/dev/null || virsh undefine "$FQDN" 2>/dev/null || true
+      echo "LIBVIRT_DELETED"
+    else
+      echo "LIBVIRT_ABSENT"
+    fi
+  args:
+    executable: /bin/bash
+  register: _libvirt_cleanup
+  failed_when: false
+  changed_when: "'LIBVIRT_DELETED' in (_libvirt_cleanup.stdout | default(''))"
+  run_once: true # noqa: run-once[task]
+
+- name: Remove HTTP-boot disable flag before reprovisioning (ensures hook preseeds HTTP BootNext)
+  ansible.builtin.file:
+    path: "/etc/libvirt/hooks/no-httpboot-{{ lightspeed_demo_vm_fqdn }}"
+    state: absent
+  become: true
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]
+
+- name: Remove build-exited webhook ready marker before reprovisioning
+  ansible.builtin.file:
+    path: "{{ libvirt_prefer_disk_boot_webhook_ready_dir | default('/run/provision-demo') }}/{{ lightspeed_demo_vm_fqdn }}.ready"
+    state: absent
+  become: true
+  delegate_to: localhost
+  run_once: true # noqa: run-once[task]

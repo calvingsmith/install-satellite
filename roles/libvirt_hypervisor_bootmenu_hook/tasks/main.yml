@@ -42,3 +42,7 @@
     group: root
     mode: "0755"
   notify: Restart libvirtd for hook scripts
+
+- name: Install build_exited webhook receiver for disk boot fix
+  ansible.builtin.import_tasks: build_webhook.yml
+  when: libvirt_prefer_disk_boot_webhook_enabled | default(true) | bool
