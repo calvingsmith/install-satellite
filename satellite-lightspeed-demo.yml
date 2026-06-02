@@ -19,7 +19,7 @@
 #
 # Variables (override with -e):
 #   lightspeed_registry_authfile_src — path on the controller (default: $HOME/.docker/config.json)
-#   satellite_version                — optional, e.g. "6.18"; if unset, derived from rpm -q satellite
+#   satellite_version                — optional, e.g. "6.18"; if unset, derived from installed satellite RPM
 #
 # Optional:
 #   lightspeed_skip_podman_login       — true to skip copying auth (use existing Satellite file)
@@ -88,22 +88,24 @@
           Run: podman login registry.redhat.io (or docker login). Or set -e lightspeed_skip_podman_login=true
           if /etc/foreman/registry-auth.json is already configured on the Satellite.
 
-    - name: Check Satellite RPM is installed
-      ansible.builtin.command: rpm -q satellite
-      register: lightspeed_rpm_check
-      changed_when: false
-      failed_when: lightspeed_rpm_check.rc != 0
+    - name: Gather installed package facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Require Satellite RPM package
+      ansible.builtin.assert:
+        that:
+          - "'satellite' in ansible_facts.packages"
+        fail_msg: Satellite RPM package is not installed on this host.
 
   tasks:
-    - name: Query Satellite RPM version
-      when: satellite_version is not defined
-      ansible.builtin.command: rpm -q --qf '%{VERSION}' satellite
-      register: lightspeed_rpm_version
-      changed_when: false
-
     - name: Set effective Satellite version for installer flags
       ansible.builtin.set_fact:
-        lightspeed_satellite_version_effective: "{{ satellite_version if satellite_version is defined else lightspeed_rpm_version.stdout }}"
+        lightspeed_satellite_version_effective: >-
+          {{
+            satellite_version if satellite_version is defined
+            else ansible_facts.packages['satellite'][0].version
+          }}
 
     - name: Choose installer mode (6.18+ uses --enable-iop; 6.17 uses legacy advisor flag)
       ansible.builtin.set_fact:
@@ -174,6 +176,8 @@
           ansible.builtin.copy:
             src: "{{ playbook_dir }}/roles/{{ item }}"
             dest: /usr/share/ansible/roles/
+            mode: "0644"
+            directory_mode: "0755"
             owner: root
             group: root
           loop:
@@ -216,6 +220,36 @@
           failed_when: lightspeed_demo_hammer_import.rc != 0
 
   post_tasks:
+    - name: Ensure IOP CVE map download service and timer are enabled
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        daemon_reload: true
+      loop:
+        - iop-cvemap-download.service
+        - iop-cvemap-download.timer
+
+    - name: Trigger IOP CVE map download now
+      ansible.builtin.systemd:
+        name: iop-cvemap-download.service
+        state: started
+      register: lightspeed_cvemap_start
+
+    - name: Verify IOP CVE map download completed successfully
+      ansible.builtin.assert:
+        that:
+          - lightspeed_cvemap_start.status.Result | default('success') == 'success'
+        fail_msg: >-
+          iop-cvemap-download.service finished with Result={{ lightspeed_cvemap_start.status.Result | default('unknown') }}.
+
+    - name: Verify CVE map file exists on Satellite
+      ansible.builtin.stat:
+        path: /var/www/html/pub/iop/data/meta/v1/cvemap.xml
+      register: lightspeed_cvemap_file
+      until: lightspeed_cvemap_file.stat.exists | default(false)
+      retries: 12
+      delay: 10
+
     - name: Reminder — vulnerability is Technology Preview
       ansible.builtin.debug:
         msg: >-
@@ -289,18 +323,20 @@
           Run post-install (rhel9_provisioning host group) or fix lightspeed_demo_hostgroup_parent.
       run_once: true
 
-    - name: Optionally set lab_bootstrap_authorized_key from controller ~/.ssh/casmith.pub
+    - name: Stat ~/.ssh/casmith.pub on the Ansible controller
       when: lab_bootstrap_authorized_key is not defined
-      block:
-        - name: Stat ~/.ssh/casmith.pub on the Ansible controller
-          ansible.builtin.stat:
-            path: "{{ (lookup('env', 'HOME') | default('/root', true)) ~ '/.ssh/casmith.pub' }}"
-          register: lightspeed_casmith_pub_on_controller
-        - name: Load one-line public key for Foreman host group parameter
-          when: lightspeed_casmith_pub_on_controller.stat.exists
-          ansible.builtin.set_fact:
-            lab_bootstrap_authorized_key: "{{ lookup('file', (lookup('env', 'HOME') | default('/root', true)) ~ '/.ssh/casmith.pub') | trim }}"
       run_once: true
+      ansible.builtin.stat:
+        path: "{{ (lookup('env', 'HOME') | default('/root', true)) ~ '/.ssh/casmith.pub' }}"
+      register: lightspeed_casmith_pub_on_controller
+
+    - name: Load one-line public key for Foreman host group parameter
+      when:
+        - lab_bootstrap_authorized_key is not defined
+        - lightspeed_casmith_pub_on_controller.stat.exists
+      run_once: true
+      ansible.builtin.set_fact:
+        lab_bootstrap_authorized_key: "{{ lookup('file', (lookup('env', 'HOME') | default('/root', true)) ~ '/.ssh/casmith.pub') | trim }}"
 
     - name: Build Foreman parameters list for SOE (password SSH + optional bootstrap key)
       ansible.builtin.set_fact:

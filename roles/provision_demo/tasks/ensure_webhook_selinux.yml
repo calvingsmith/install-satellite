@@ -2,19 +2,11 @@
 # ForemanWebhooks::DeliverWebhookJob runs in the foreman_rails SELinux domain. Without
 # foreman_rails_can_connect_all, outbound HTTP to the hypervisor webhook port is denied.
 
-- name: Check foreman_rails_can_connect_all SELinux boolean on Satellite
-  ansible.builtin.command: getsebool foreman_rails_can_connect_all
-  register: _provision_demo_selinux_webhook
-  changed_when: false
-  delegate_to: "{{ lightspeed_demo_satellite_host }}"
-  become: true
-  vars:
-    ansible_connection: ssh
-  run_once: true # noqa: run-once[task]
-
 - name: Allow Foreman Rails workers to deliver webhooks over HTTP
-  ansible.builtin.command: setsebool -P foreman_rails_can_connect_all 1
-  when: "'on' not in (_provision_demo_selinux_webhook.stdout | default(''))"
+  ansible.posix.seboolean:
+    name: foreman_rails_can_connect_all
+    state: true
+    persistent: true
   delegate_to: "{{ lightspeed_demo_satellite_host }}"
   become: true
   vars:

@@ -3,13 +3,136 @@
 - name: Validate recommendation demo method
   ansible.builtin.assert:
     that:
-      - lightspeed_demo_recommendation_method in ['firewalld', 'sysctl_ip_forward']
-    fail_msg: "lightspeed_demo_recommendation_method must be firewalld or sysctl_ip_forward."
+      - lightspeed_demo_recommendation_method in ['inventory_refresh', 'sysctl_accept_source_route', 'firewalld', 'sysctl_ip_forward']
+    fail_msg: >-
+      lightspeed_demo_recommendation_method must be inventory_refresh, sysctl_accept_source_route, firewalld,
+      or sysctl_ip_forward.
+
+- name: Check for existing advisor hits before demo changes
+  ansible.builtin.command:
+    argv:
+      - insights-client
+      - --show-results
+  register: lightspeed_demo_rec_pre_results
+  changed_when: false
+  failed_when: false
+
+- name: Record existing advisor hit count
+  ansible.builtin.set_fact:
+    lightspeed_demo_rec_pre_hit_count: "{{ (lightspeed_demo_rec_pre_results.stdout | default('[]') | from_json) | length }}"
+
+# #region agent log
+- name: Debug log — pre-hit check (hypothesis A/B)
+  ansible.builtin.import_tasks: "{{ playbook_dir }}/tasks/lightspeed_demo_debug_log.yml"
+  vars:
+    lightspeed_demo_debug_payload:
+      sessionId: "754f4a"
+      runId: "{{ ansible_run_id | default('manual') }}"
+      hypothesisId: "A,B"
+      location: "lightspeed_demo_recommendation:pre_hit"
+      message: "show-results before recommendation demo"
+      timestamp: "{{ ansible_date_time.epoch | int * 1000 }}"
+      data:
+        method: "{{ lightspeed_demo_recommendation_method }}"
+        state: "{{ lightspeed_demo_recommendation_state }}"
+        show_results_rc: "{{ lightspeed_demo_rec_pre_results.rc | default('unknown') }}"
+        show_results_stdout_len: "{{ lightspeed_demo_rec_pre_results.stdout | default('') | length }}"
+        show_results_stdout_head: "{{ (lightspeed_demo_rec_pre_results.stdout | default('') | trim)[:120] }}"
+        pre_hit_count: "{{ lightspeed_demo_rec_pre_hit_count }}"
+        coordinated_upload_var: "{{ lightspeed_demo_coordinated_insights_upload | default(false) }}"
+# #endregion
+
+- name: Apply Lightspeed recommendation demo (sysctl accept_source_route)
+  when:
+    - lightspeed_demo_recommendation_state == 'present'
+    - lightspeed_demo_recommendation_method == 'sysctl_accept_source_route'
+    - lightspeed_demo_rec_pre_hit_count | int == 0
+  block:
+    - name: Enable accept_source_route for demo (fixable sysctl recommendation)
+      ansible.builtin.command:
+        argv:
+          - sysctl
+          - -w
+          - net.ipv4.conf.all.accept_source_route=1
+      changed_when: true
+
+    - name: Persist accept_source_route demo setting
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/50-lightspeed-demo-accept-source-route.conf
+        mode: "0644"
+        content: |
+          # Lightspeed IOP demo — remove after testing (role lightspeed_demo_recommendation, state=absent)
+          net.ipv4.conf.all.accept_source_route = 1
+
+# #region agent log
+- name: Debug log — accept_source_route state after demo block (hypothesis B,E)
+  when:
+    - lightspeed_demo_recommendation_state == 'present'
+    - lightspeed_demo_recommendation_method == 'sysctl_accept_source_route'
+  block:
+    - name: Collect accept_source_route sysctl value for debug
+      ansible.builtin.command:
+        argv:
+          - sysctl
+          - -n
+          - net.ipv4.conf.all.accept_source_route
+      register: _dbg_accept_source_route
+      changed_when: false
+      failed_when: false
+
+    - name: Write accept_source_route debug log
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/tasks/lightspeed_demo_debug_log.yml"
+      vars:
+        lightspeed_demo_debug_payload:
+          sessionId: "754f4a"
+          runId: "{{ ansible_run_id | default('manual') }}"
+          hypothesisId: "B,E"
+          location: "lightspeed_demo_recommendation:post_accept_source_route"
+          message: "accept_source_route state after demo tasks"
+          timestamp: "{{ ansible_date_time.epoch | int * 1000 }}"
+          data:
+            pre_hit_count: "{{ lightspeed_demo_rec_pre_hit_count | default('unknown') }}"
+            sysctl_block_ran: "{{ lightspeed_demo_rec_pre_hit_count | int == 0 }}"
+            accept_source_route: "{{ _dbg_accept_source_route.stdout | default('') | trim }}"
+# #endregion
+
+- name: Skip accept_source_route misconfiguration — advisor hits already present from kickstart
+  when:
+    - lightspeed_demo_recommendation_state == 'present'
+    - lightspeed_demo_recommendation_method == 'sysctl_accept_source_route'
+    - lightspeed_demo_rec_pre_hit_count | int > 0
+  ansible.builtin.debug:
+    msg: >-
+      Skipping accept_source_route enable: {{ lightspeed_demo_rec_pre_hit_count }} fixable advisor hit(s)
+      already visible (kickstart insights upload). A second insights-client upload would clear IOP results.
+
+- name: Remove Lightspeed recommendation demo (sysctl accept_source_route)
+  when:
+    - lightspeed_demo_recommendation_state == 'absent'
+    - lightspeed_demo_recommendation_method == 'sysctl_accept_source_route'
+  block:
+    - name: Remove accept_source_route demo file
+      ansible.builtin.file:
+        path: /etc/sysctl.d/50-lightspeed-demo-accept-source-route.conf
+        state: absent
+
+    - name: Reload sysctl after removing accept_source_route demo file
+      ansible.builtin.command: sysctl --system
+      changed_when: true
+
+    - name: Disable accept_source_route after demo
+      ansible.builtin.command:
+        argv:
+          - sysctl
+          - -w
+          - net.ipv4.conf.all.accept_source_route=0
+      changed_when: true
 
 - name: Apply Lightspeed recommendation demo (firewalld inactive)
   when:
     - lightspeed_demo_recommendation_state == 'present'
     - lightspeed_demo_recommendation_method == 'firewalld'
+    - lightspeed_demo_rec_pre_hit_count | int == 0
   block:
     - name: Ensure firewalld is stopped and disabled (demo only)
       ansible.builtin.service:
@@ -32,6 +155,7 @@
   when:
     - lightspeed_demo_recommendation_state == 'present'
     - lightspeed_demo_recommendation_method == 'sysctl_ip_forward'
+    - lightspeed_demo_rec_pre_hit_count | int == 0
   ansible.builtin.copy:
     dest: /etc/sysctl.d/50-lightspeed-demo-ip-forward.conf
     mode: "0644"
@@ -43,6 +167,7 @@
   when:
     - lightspeed_demo_recommendation_state == 'present'
     - lightspeed_demo_recommendation_method == 'sysctl_ip_forward'
+    - lightspeed_demo_rec_pre_hit_count | int == 0
   ansible.builtin.command: sysctl --system
   changed_when: true
 
@@ -60,3 +185,116 @@
     - lightspeed_demo_recommendation_method == 'sysctl_ip_forward'
   ansible.builtin.command: sysctl --system
   changed_when: true
+
+- name: Upload Insights inventory after recommendation demo changes
+  when:
+    - lightspeed_demo_recommendation_trigger_insights_upload | bool
+    - lightspeed_demo_recommendation_state == 'absent' or (lightspeed_demo_rec_pre_hit_count | int == 0)
+  block:
+    - name: Check Insights client registration status
+      ansible.builtin.command:
+        argv:
+          - insights-client
+          - --status
+      register: lightspeed_demo_rec_insights_status
+      changed_when: false
+      failed_when: false
+
+    - name: Register Insights client when not yet registered
+      when: lightspeed_demo_rec_insights_status.rc != 0
+      ansible.builtin.command:
+        argv:
+          - insights-client
+          - --register
+      register: lightspeed_demo_rec_insights_register
+      changed_when: lightspeed_demo_rec_insights_register.rc == 0
+
+    - name: Upload Insights inventory
+      ansible.builtin.command:
+        argv:
+          - insights-client
+      register: lightspeed_demo_rec_insights_upload
+      changed_when: lightspeed_demo_rec_insights_upload.rc == 0
+      retries: "{{ lightspeed_demo_recommendation_insights_upload_retries | int }}"
+      delay: "{{ lightspeed_demo_recommendation_insights_upload_delay | int }}"
+      until: lightspeed_demo_rec_insights_upload.rc == 0
+
+# #region agent log
+- name: Debug log — recommendation role upload (hypothesis C,D)
+  when:
+    - lightspeed_demo_recommendation_trigger_insights_upload | bool
+    - lightspeed_demo_recommendation_state == 'absent' or (lightspeed_demo_rec_pre_hit_count | int == 0)
+  ansible.builtin.import_tasks: "{{ playbook_dir }}/tasks/lightspeed_demo_debug_log.yml"
+  vars:
+    lightspeed_demo_debug_payload:
+      sessionId: "754f4a"
+      runId: "{{ ansible_run_id | default('manual') }}"
+      hypothesisId: "C,D"
+      location: "lightspeed_demo_recommendation:upload"
+      message: "recommendation role ran insights upload"
+      timestamp: "{{ ansible_date_time.epoch | int * 1000 }}"
+      data:
+        upload_rc: "{{ lightspeed_demo_rec_insights_upload.rc | default('unknown') }}"
+        coordinated_upload_var: "{{ lightspeed_demo_coordinated_insights_upload | default(false) }}"
+        upload_stdout_tail: "{{ (lightspeed_demo_rec_insights_upload.stdout | default('') | trim)[-200:] }}"
+# #endregion
+
+- name: Skip Insights re-upload to preserve existing advisor hits
+  when:
+    - lightspeed_demo_recommendation_trigger_insights_upload | bool
+    - lightspeed_demo_recommendation_state == 'present'
+    - lightspeed_demo_rec_pre_hit_count | int > 0
+  ansible.builtin.debug:
+    msg: >-
+      Skipping insights-client upload: preserving {{ lightspeed_demo_rec_pre_hit_count }} existing
+      fixable recommendation(s) from kickstart (second upload clears IOP advisor hits).
+
+- name: Wait for advisor results after Insights upload
+  when:
+    - lightspeed_demo_recommendation_state == 'present'
+    - lightspeed_demo_recommendation_wait_for_results_retries | int > 0
+    - lightspeed_demo_recommendation_trigger_insights_upload | bool
+    - lightspeed_demo_rec_pre_hit_count | int == 0
+  block:
+    - name: Poll insights-client show-results for advisor hits
+      ansible.builtin.command:
+        argv:
+          - insights-client
+          - --show-results
+      register: lightspeed_demo_rec_show_results
+      changed_when: false
+      failed_when: false
+      retries: "{{ lightspeed_demo_recommendation_wait_for_results_retries | int }}"
+      delay: "{{ lightspeed_demo_recommendation_wait_for_results_delay | int }}"
+      until: (lightspeed_demo_rec_show_results.stdout | default('[]') | trim) not in ['[]', '']
+
+    - name: Parse advisor hit count from show-results
+      ansible.builtin.set_fact:
+        lightspeed_demo_rec_hit_count: "{{ (lightspeed_demo_rec_show_results.stdout | default('[]') | from_json) | length }}"
+
+    - name: Warn when no advisor hits are visible yet
+      when: lightspeed_demo_rec_hit_count | int == 0
+      ansible.builtin.debug:
+        msg: >-
+          No advisor hits in insights-client --show-results yet. Reprovision the VM (provision_demo)
+          so kickstart can perform the first insights upload, then re-run this role. Allow several
+          minutes, then refresh Red Hat Lightspeed > Recommendations.
+
+- name: Recommendation demo summary
+  ansible.builtin.set_fact:
+    lightspeed_demo_rec_final_hit_count: >-
+      {{
+        lightspeed_demo_rec_hit_count | default(none)
+        if (lightspeed_demo_rec_hit_count is defined)
+        else lightspeed_demo_rec_pre_hit_count | default(0)
+      }}
+
+- name: Recommendation demo summary message
+  ansible.builtin.debug:
+    msg: >-
+      Recommendation demo state={{ lightspeed_demo_recommendation_state }},
+      method={{ lightspeed_demo_recommendation_method }}.
+      Insights upload rc={{ lightspeed_demo_rec_insights_upload.rc | default('skipped') }}.
+      Advisor hits visible to client={{ lightspeed_demo_rec_final_hit_count }}.
+      Check Satellite UI: Red Hat Lightspeed > Recommendations (fixable hits include kernel boot
+      and sysctl rules on first kickstart upload).

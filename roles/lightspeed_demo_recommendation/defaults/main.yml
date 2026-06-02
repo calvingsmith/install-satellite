@@ -1,9 +1,21 @@
 ---
 # Reversible demo state for Lightspeed > Recommendations (IOP advisor). Apply on a content host,
-# wait for inventory/advisor processing, then review Red Hat Lightspeed > Recommendations.
+# upload inventory, wait for advisor processing, then review Red Hat Lightspeed > Recommendations.
 lightspeed_demo_recommendation_state: present  # present | absent
 
 # How to trigger advisor-style findings (pick one; lab-only).
-# - firewalld: stop/disable firewalld (strong signal on hosts expected to run a firewall).
-# - sysctl_ip_forward: set net.ipv4.ip_forward=1 (often surfaces as a networking/hardening hit).
-lightspeed_demo_recommendation_method: firewalld
+# - inventory_refresh: preserve kickstart advisor hits; skip re-upload when hits already exist.
+# - sysctl_accept_source_route: set net.ipv4.conf.all.accept_source_route=1 when no hits yet.
+# - firewalld: stop/disable firewalld when no hits yet (may not match enabled IOP rules).
+# - sysctl_ip_forward: set net.ipv4.ip_forward=1 when no hits yet.
+lightspeed_demo_recommendation_method: inventory_refresh
+
+# Upload Insights inventory after applying or reverting the demo misconfiguration.
+# Skipped on present when kickstart already uploaded hits (second upload clears IOP results).
+lightspeed_demo_recommendation_trigger_insights_upload: true
+lightspeed_demo_recommendation_insights_upload_retries: 3
+lightspeed_demo_recommendation_insights_upload_delay: 30
+
+# Poll insights-client --show-results after upload (0 = skip polling).
+lightspeed_demo_recommendation_wait_for_results_retries: 12
+lightspeed_demo_recommendation_wait_for_results_delay: 15

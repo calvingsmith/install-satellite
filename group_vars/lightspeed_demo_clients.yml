@@ -1,0 +1,20 @@
+---
+# Lab defaults for Lightspeed demo clients (recommendation + vulnerability together).
+#
+# Defer kickstart insights upload via lightspeed_demo_skip_kickstart_insights_upload while keeping
+# host_registration_insights true for Foreman telemetry. Play 4 uploads once after both demo roles.
+lightspeed_demo_defer_insights_upload: true
+lightspeed_demo_coordinated_insights_upload: true
+
+lightspeed_demo_recommendation_state: present
+lightspeed_demo_recommendation_method: sysctl_accept_source_route
+lightspeed_demo_recommendation_trigger_insights_upload: false
+
+#
+lightspeed_demo_vuln_downgrade_packages:
+  - name: openssl-libs
+
+lightspeed_demo_vuln_trigger_insights_upload: true
+lightspeed_demo_vuln_insights_upload_retries: 3
+
+lightspeed_demo_recommendation_insights_upload_retries: 3

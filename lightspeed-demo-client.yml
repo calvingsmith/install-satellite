@@ -1,10 +1,15 @@
 ---
 # Apply lab-only demo roles on RHEL 9 hosts registered to Satellite (inventory + Lightspeed IOP).
 #
-# Recommendation demo (lightspeed_demo_recommendation): reversible misconfiguration surfaced in
-#   Red Hat Lightspeed > Recommendations after advisor processing.
+# Recommendation demo (lightspeed_demo_recommendation): enable accept_source_route sysctl (or other method) when no
+#   advisor hits exist yet, then defer per-role upload to the coordinated play task.
 # Vulnerability demo (lightspeed_demo_vulnerability): adjust installed RPMs so Lightspeed > Vulnerability
 #   can correlate CVEs (requires CVE map sync on Satellite and often an older NVR from your repos).
+#
+# Both demos together: group_vars/lightspeed_demo_clients.yml sets lightspeed_demo_defer_insights_upload
+#   (kickstart param lightspeed_demo_skip_kickstart_insights_upload) and
+#   lightspeed_demo_coordinated_insights_upload so play 4 registers/uploads once after both roles.
+#   host_registration_insights stays true so Foreman allows insights-client telemetry.
 #
 # Import these roles into Satellite for assignment via host group:
 #   1. Copy roles/lightspeed_demo_recommendation and roles/lightspeed_demo_vulnerability to the Satellite
@@ -45,6 +50,16 @@
 #
 # Run demo roles only (after the VM is reachable over SSH):
 #   ansible-playbook -i inventory lightspeed-demo-client.yml --limit test-ls.laptop.lab
+#   ansible-playbook -i inventory lightspeed-demo-client.yml --tags lightspeed_demo --limit test-ls.laptop.lab
+# Vulnerability demo only (existing VM; does not re-provision):
+#   ansible-playbook -i inventory lightspeed-demo-client.yml --tags lightspeed_demo_vulnerability --limit test-ls.laptop.lab
+#
+# Note: --tags provision_demo does NOT run recommendation or vulnerability demo roles (play 4).
+# Full flow (provision + post-provision + both demos):
+#   ansible-playbook -i inventory lightspeed-demo-client.yml
+#
+# Verify vulnerability demo: Satellite UI → Red Hat Lightspeed → Vulnerability for test-ls.laptop.lab.
+# Allow a few minutes after insights-client upload and iop-cvemap-download on the Satellite.
 # Second play uses root + root_password from vault (same as Foreman root_pass). RHEL 9+ sshd defaults
 # to prohibit-password for root, so password SSH fails with "Invalid/incorrect password" unless the
 # SOE kickstart has applied (host param lab_permit_root_password_ssh on lightspeed-demo) — re-publish the
@@ -54,8 +69,9 @@
 # ansible_user / ansible_ssh_private_key_file.
 #
 # Tags:
-#   provision_demo — Satellite API: create host + build + start VM
-#   lightspeed_demo_recommendation, lightspeed_demo_vulnerability — role tasks (unchanged)
+#   provision_demo — Satellite API: create host + build + start VM (does not run demo roles)
+#   lightspeed_demo — both recommendation and vulnerability demo roles (play 4)
+#   lightspeed_demo_recommendation, lightspeed_demo_vulnerability — individual role tasks
 
 - name: Provision Lightspeed demo VM via Satellite
   hosts: satellite_group
@@ -215,10 +231,30 @@
   hosts: lightspeed_demo_clients
   become: true
   gather_facts: true
+  tags:
+    - lightspeed_demo
   vars_files:
     - "~/vault/satellite.yml"
     - "~/vault/secrets.yml"
     - "{{ playbook_dir }}/laptop.lab.yml"
+  pre_tasks:
+    # #region agent log
+    - name: Debug log — play 4 config (hypothesis D)
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/tasks/lightspeed_demo_debug_log.yml"
+      vars:
+        lightspeed_demo_debug_payload:
+          sessionId: "754f4a"
+          runId: "{{ ansible_run_id | default('manual') }}"
+          hypothesisId: "D"
+          location: "lightspeed-demo-client.yml:play4"
+          message: "play 4 start — coordinated upload config"
+          timestamp: "{{ ansible_date_time.epoch | int * 1000 }}"
+          data:
+            coordinated_upload_var: "{{ lightspeed_demo_coordinated_insights_upload | default(false) }}"
+            defer_kickstart_var: "{{ lightspeed_demo_defer_insights_upload | default(false) }}"
+            recommendation_method: "{{ lightspeed_demo_recommendation_method | default('unset') }}"
+            coordinated_task_file_exists: "{{ lookup('ansible.builtin.fileglob', playbook_dir + '/tasks/lightspeed_demo_coordinated_insights_upload.yml') != [] }}"
+    # #endregion
   roles:
     - role: lightspeed_demo_recommendation
       tags:
